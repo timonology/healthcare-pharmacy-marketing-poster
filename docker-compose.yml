@@ -1,0 +1,93 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: acme-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+      MONGO_INITDB_DATABASE: acme
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: acme-azurite
+    restart: unless-stopped
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0"
+    ports:
+      - "10000:10000"   # Blob
+      - "10001:10001"   # Queue
+      - "10002:10002"   # Table
+    volumes:
+      - azurite-data:/data
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: acme-api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      Mongo__ConnectionString: mongodb://root:example@mongo:27017/acme?authSource=admin
+      Mongo__Database: acme
+      Jwt__Secret: ${JWT_SECRET}
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: ${JWT_AUDIENCE}
+      Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES}
+      AzureBlob__ConnectionString: ${AZURE_BLOB_CONNECTION_STRING}
+      AzureBlob__Container: ${AZURE_BLOB_CONTAINER}
+    ports:
+      - "${API_HOST_PORT:-5050}:8080"
+
+  ai-service:
+    build:
+      context: ./apps/ai-service
+      dockerfile: Dockerfile
+    container_name: acme-ai
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT}
+    ports:
+      - "${AI_HOST_PORT:-8000}:8000"
+
+  web:
+    # Build from repo root so the image can pull in packages/shared-types.
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: acme-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # Browser-facing URLs (used by client code, hit the host's published ports).
+      NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-5050}
+      NEXT_PUBLIC_AI_URL: http://localhost:${AI_HOST_PORT:-8000}
+      # Container-to-container URLs (used by the Next BFF route handlers).
+      API_INTERNAL_URL: http://api:8080
+      AI_INTERNAL_URL: http://ai-service:8000
+    ports:
+      - "${WEB_HOST_PORT:-9090}:3000"
+
+volumes:
+  mongo-data:
+  azurite-data:

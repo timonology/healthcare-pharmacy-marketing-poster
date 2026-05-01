@@ -1,0 +1,30 @@
+# Node
+node_modules
+.next
+dist
+.pnpm-store
+.turbo
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Python
+__pycache__/
+*.pyc
+.venv
+.uv
+.pytest_cache
+.ruff_cache
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
