@@ -16,6 +16,6 @@ RUN dotnet publish src/Acme.WebApi/Acme.WebApi.csproj -c Release -o /app /p:UseA
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080
 COPY --from=build /app .
-ENTRYPOINT ["dotnet", "Acme.WebApi.dll"]
+# Bind to $PORT when set (Railway), 8080 otherwise (local docker-compose).
+ENTRYPOINT ["sh", "-c", "exec dotnet Acme.WebApi.dll --urls=http://+:${PORT:-8080}"]
