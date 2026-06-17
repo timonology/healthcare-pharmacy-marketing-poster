@@ -1,3 +1,5 @@
+using Acme.Domain.Subscriptions;
+
 namespace Acme.Application.Auth;
 
 public sealed record RegisterRequest(string Email, string Password, string DisplayName);
@@ -17,4 +19,5 @@ public sealed record UserProfile(
     string Id,
     string Email,
     string DisplayName,
+    SubscriptionTier Tier,
     DateTime CreatedAtUtc);

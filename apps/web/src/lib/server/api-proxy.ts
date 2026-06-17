@@ -8,7 +8,7 @@ import { readAccessToken } from "./cookies";
 const API_BASE =
   process.env.API_INTERNAL_URL ??
   process.env.NEXT_PUBLIC_API_URL ??
-  "http://localhost:5000";
+  "http://localhost:5050";
 
 export interface ApiResult<T> {
   ok: boolean;

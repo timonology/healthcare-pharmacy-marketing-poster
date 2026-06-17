@@ -25,6 +25,6 @@ public sealed class MeController(IUserRepository users) : ControllerBase
         var user = await users.FindByIdAsync(sub, ct);
         if (user is null) return NotFound();
 
-        return Ok(new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.CreatedAtUtc));
+        return Ok(new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.CreatedAtUtc));
     }
 }

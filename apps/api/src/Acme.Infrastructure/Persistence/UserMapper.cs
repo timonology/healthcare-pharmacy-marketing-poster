@@ -1,12 +1,9 @@
 using System.Reflection;
+using Acme.Domain.Subscriptions;
 using Acme.Domain.Users;
 
 namespace Acme.Infrastructure.Persistence;
 
-/// <summary>
-/// Hydrates a <see cref="User"/> from persisted state without going through
-/// <c>Register</c> (which would create a new id and timestamps).
-/// </summary>
 internal static class UserMapper
 {
     private static readonly ConstructorInfo PrivateCtor = typeof(User)
@@ -18,6 +15,7 @@ internal static class UserMapper
         string email,
         string displayName,
         string passwordHash,
+        SubscriptionTier tier,
         DateTime createdAtUtc,
         DateTime updatedAtUtc)
     {
@@ -27,6 +25,7 @@ internal static class UserMapper
         SetProp(user, nameof(User.Email), Email.Create(email));
         SetProp(user, nameof(User.DisplayName), displayName);
         SetProp(user, nameof(User.PasswordHash), PasswordHash.FromHash(passwordHash));
+        SetProp(user, nameof(User.Tier), tier);
         SetProp(user, nameof(User.CreatedAtUtc), createdAtUtc);
         SetProp(user, nameof(User.UpdatedAtUtc), updatedAtUtc);
 

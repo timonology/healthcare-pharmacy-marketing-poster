@@ -1,7 +1,4 @@
-/**
- * Auth contracts shared between web, .NET API, and ai-service.
- * Mirrored as C# DTOs in Acme.Application.Auth and Pydantic models in app/schemas/auth.py.
- */
+import type { SubscriptionTier } from "./subscription";
 
 export interface RegisterRequest {
   email: string;
@@ -20,7 +17,7 @@ export interface RefreshRequest {
 
 export interface AuthResponse {
   accessToken: string;
-  accessTokenExpiresAtUtc: string; // ISO-8601
+  accessTokenExpiresAtUtc: string;
   refreshToken: string;
   refreshTokenExpiresAtUtc: string;
   user: UserProfile;
@@ -30,16 +27,16 @@ export interface UserProfile {
   id: string;
   email: string;
   displayName: string;
+  tier: SubscriptionTier;
   createdAtUtc: string;
 }
 
-/** Decoded JWT claims issued by the .NET API. */
 export interface JwtClaims {
-  sub: string; // user id
+  sub: string;
   email: string;
   name: string;
   iss: string;
   aud: string;
-  exp: number; // unix seconds
+  exp: number;
   iat: number;
 }

@@ -2,7 +2,6 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace Acme.Infrastructure.Persistence;
 
-/// <summary>Persistence model. Kept separate from the domain entity.</summary>
 internal sealed class UserDocument
 {
     [BsonId]
@@ -16,6 +15,10 @@ internal sealed class UserDocument
 
     [BsonElement("passwordHash")]
     public string PasswordHash { get; set; } = default!;
+
+    [BsonElement("tier")]
+    [BsonDefaultValue(0)]
+    public int Tier { get; set; }
 
     [BsonElement("createdAtUtc")]
     public DateTime CreatedAtUtc { get; set; }

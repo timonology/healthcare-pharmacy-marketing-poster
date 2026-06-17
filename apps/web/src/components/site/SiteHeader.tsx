@@ -3,17 +3,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { LogOut } from "lucide-react";
+import { LogOut, Sparkles } from "lucide-react";
+import type { SubscriptionTier } from "@acme/shared-types";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
+import { useSubscriptionStore } from "@/store/subscription-store";
 
 const NAV = [
   { href: "/templates", label: "Templates" },
   { href: "/posters", label: "My Posters" },
   { href: "/brand-kit", label: "Brand Kit" },
+  { href: "/pricing", label: "Pricing" },
 ] as const;
 
 const HIDE_PATTERNS: RegExp[] = [
@@ -27,6 +32,8 @@ export function SiteHeader() {
   const pathname = usePathname() ?? "";
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
+  const subscription = useSubscriptionStore((s) => s.current);
+  const setSubscription = useSubscriptionStore((s) => s.setCurrent);
 
   useEffect(() => {
     if (user) return;
@@ -44,11 +51,28 @@ export function SiteHeader() {
     };
   }, [user, setUser]);
 
+  useEffect(() => {
+    if (!user || subscription) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api.getCurrentSubscription();
+        if (!cancelled) setSubscription(s);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, subscription, setSubscription]);
+
   if (HIDE_PATTERNS.some((re) => re.test(pathname))) return null;
 
   async function logout() {
     await api.logout();
     setUser(null);
+    setSubscription(null);
     window.location.assign("/login");
   }
 
@@ -80,8 +104,10 @@ export function SiteHeader() {
       </nav>
 
       <div className="ml-auto flex items-center gap-2">
+        <ThemeToggle />
         {user ? (
           <>
+            <TierBadge tier={user.tier} />
             <span className="hidden text-sm text-muted-foreground sm:inline">
               {user.displayName}
             </span>
@@ -103,5 +129,26 @@ export function SiteHeader() {
         )}
       </div>
     </header>
+  );
+}
+
+function TierBadge({ tier }: { tier: SubscriptionTier }) {
+  if (tier === "Pro") {
+    return (
+      <Badge className="gap-1 bg-primary/15 text-primary hover:bg-primary/15">
+        <Sparkles className="h-3 w-3" />
+        Pro
+      </Badge>
+    );
+  }
+  if (tier === "Starter") {
+    return <Badge variant="secondary">Starter</Badge>;
+  }
+  return (
+    <Link href="/pricing" title="Upgrade your plan">
+      <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+        Free
+      </Badge>
+    </Link>
   );
 }

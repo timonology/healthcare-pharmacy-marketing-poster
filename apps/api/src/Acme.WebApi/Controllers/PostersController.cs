@@ -64,6 +64,7 @@ public sealed class PostersController(PosterService service) : ControllerBase
                 result.Value),
             ResultKind.NotFound => NotFound(new { error = result.Error }),
             ResultKind.Invalid => BadRequest(new { error = result.Error }),
+            ResultKind.Forbidden => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error }),
             _ => BadRequest(new { error = result.Error }),
         };
     }
@@ -103,6 +104,7 @@ public sealed class PostersController(PosterService service) : ControllerBase
                 new { id = result.Value!.Id },
                 result.Value),
             ResultKind.NotFound => NotFound(new { error = result.Error }),
+            ResultKind.Forbidden => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error }),
             _ => BadRequest(new { error = result.Error }),
         };
     }

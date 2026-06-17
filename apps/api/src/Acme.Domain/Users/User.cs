@@ -1,4 +1,5 @@
 using Acme.Domain.Common;
+using Acme.Domain.Subscriptions;
 
 namespace Acme.Domain.Users;
 
@@ -7,8 +8,8 @@ public sealed class User : Entity
     public Email Email { get; private set; } = default!;
     public string DisplayName { get; private set; } = default!;
     public PasswordHash PasswordHash { get; private set; } = default!;
+    public SubscriptionTier Tier { get; private set; } = SubscriptionTier.Free;
 
-    // Required by Mongo driver / EF.
     private User() { }
 
     private User(string id, Email email, string displayName, PasswordHash passwordHash)
@@ -17,6 +18,7 @@ public sealed class User : Entity
         Email = email;
         DisplayName = displayName;
         PasswordHash = passwordHash;
+        Tier = SubscriptionTier.Free;
     }
 
     public static User Register(Email email, string displayName, PasswordHash passwordHash)
@@ -40,6 +42,12 @@ public sealed class User : Entity
     public void ChangePassword(PasswordHash newHash)
     {
         PasswordHash = newHash;
+        Touch();
+    }
+
+    public void ChangeTier(SubscriptionTier tier)
+    {
+        Tier = tier;
         Touch();
     }
 }

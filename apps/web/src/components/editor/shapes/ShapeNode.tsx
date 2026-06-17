@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Circle, Group, Image as KonvaImage, Line, Rect, Text } from "react-konva";
 import type Konva from "konva";
 import type { Shape } from "@acme/shared-types";
@@ -110,17 +110,14 @@ function ImageShapeNode({
   height: number;
 }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const lastUrl = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (lastUrl.current === blobKey) return;
-    lastUrl.current = blobKey;
-
-    const url = blobKey; // server returns SAS URLs in shape data; treat blobKey as resolvable
     const next = new window.Image();
-    next.crossOrigin = "anonymous";
-    next.src = url;
+    if (!blobKey.startsWith("data:")) {
+      next.crossOrigin = "anonymous";
+    }
+    next.src = blobKey;
     next.onload = () => {
       if (!cancelled) setImg(next);
     };

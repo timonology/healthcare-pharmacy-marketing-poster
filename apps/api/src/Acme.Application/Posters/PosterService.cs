@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Acme.Application.Auth;
 using Acme.Application.BrandKit;
 using Acme.Application.Common;
+using Acme.Application.Subscriptions;
 using Acme.Application.Templates;
 using Acme.Domain.Common;
 using Acme.Domain.Posters;
@@ -10,6 +12,7 @@ namespace Acme.Application.Posters;
 public sealed class PosterService(
     IPosterRepository posters,
     ITemplateRepository templates,
+    IUserRepository users,
     IBrandAssetService assets)
 {
     private static readonly TimeSpan ThumbnailUrlValidity = TimeSpan.FromMinutes(15);
@@ -38,6 +41,9 @@ public sealed class PosterService(
         CreatePosterRequest request,
         CancellationToken ct)
     {
+        if (await EnforcePosterLimit(ownerId, ct) is { } limitFailure)
+            return limitFailure;
+
         string canvasJson;
         string? sourceTemplateId = null;
 
@@ -99,6 +105,9 @@ public sealed class PosterService(
         if (source is null || source.OwnerId != ownerId)
             return Result<PosterDto>.NotFound("Poster not found.");
 
+        if (await EnforcePosterLimit(ownerId, ct) is { } limitFailure)
+            return limitFailure;
+
         var copy = Poster.Create(
             ownerId,
             $"{source.Name} (copy)",
@@ -106,6 +115,21 @@ public sealed class PosterService(
             source.SourceTemplateId);
         await posters.AddAsync(copy, ct);
         return Result<PosterDto>.Success(ToDetail(copy));
+    }
+
+    private async Task<Result<PosterDto>?> EnforcePosterLimit(string ownerId, CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(ownerId, ct);
+        if (user is null) return Result<PosterDto>.NotFound("User not found.");
+
+        var plan = Plans.For(user.Tier);
+        if (plan.MaxPosters == Plans.Unlimited) return null;
+
+        var current = await posters.CountAsync(new PosterQuery(ownerId), ct);
+        if (current < plan.MaxPosters) return null;
+
+        return Result<PosterDto>.Forbidden(
+            $"You've reached your {plan.DisplayName} plan limit of {plan.MaxPosters} posters. Upgrade to add more.");
     }
 
     public async Task<Result<bool>> DeleteAsync(string id, string ownerId, CancellationToken ct)

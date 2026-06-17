@@ -1,31 +1,48 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import type { Metadata } from "next";
+import { Features } from "@/components/landing/Features";
+import { FinalCta } from "@/components/landing/FinalCta";
+import { Hero } from "@/components/landing/Hero";
+import { HowItWorks } from "@/components/landing/HowItWorks";
+import { LandingNav } from "@/components/landing/LandingNav";
+import { PricingTeaser } from "@/components/landing/PricingTeaser";
+import { SiteFooter } from "@/components/landing/SiteFooter";
+import { TemplatesShowcase } from "@/components/landing/TemplatesShowcase";
+import { Testimonials } from "@/components/landing/Testimonials";
+import { TrustBar } from "@/components/landing/TrustBar";
+
+export const metadata: Metadata = {
+  title: "Pharmacy Poster — Create marketing posters in minutes",
+  description:
+    "AI-powered drag & drop poster designer made for pharmacies. Print-ready templates, your brand kit auto-applied. Free forever plan.",
+  openGraph: {
+    title: "Pharmacy Poster — Create marketing posters in minutes",
+    description:
+      "AI-powered drag & drop poster designer made for pharmacies. Print-ready templates, your brand kit auto-applied. Free forever plan.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Pharmacy Poster",
+    description:
+      "AI-powered drag & drop poster designer made for pharmacies.",
+  },
+};
 
 export default function HomePage() {
   return (
-    <main className="container flex min-h-screen flex-col items-center justify-center gap-6 py-20 text-center">
-      <h1 className="text-4xl font-bold tracking-tight">Pharmacy Healthcare Poster</h1>
-      <p className="max-w-prose text-muted-foreground">
-        Welcome to Sonar Pharmacy Marketing Poster Service. 
-        Here you can design Marketing Posters and send to customers. 
-      </p>
-      <div className="flex flex-wrap justify-center gap-3">
-        <Button asChild>
-          <Link href="/login">Sign in</Link>
-        </Button>
-        <Button asChild variant="secondary">
-          <Link href="/register">Create account</Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link href="/templates">Templates</Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link href="/posters">My posters</Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link href="/brand-kit">Brand kit</Link>
-        </Button>
-      </div>
-    </main>
+    <>
+      <LandingNav />
+      <main>
+        <Hero />
+        <TrustBar />
+        <Features />
+        <HowItWorks />
+        <TemplatesShowcase />
+        <Testimonials />
+        <PricingTeaser />
+        <FinalCta />
+      </main>
+      <SiteFooter />
+    </>
   );
 }

@@ -5,6 +5,7 @@ import { ArrowLeft, Download, Redo2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { ThemeToggle } from "@/components/theme-toggle";
 import type { SaveStatus } from "@/store/editor-store";
 import { useEditorStore } from "@/store/editor-store";
 
@@ -65,6 +66,7 @@ export function EditorTopBar({ onExport }: EditorTopBarProps) {
       <SaveBadge status={status} lastSavedAtUtc={lastSavedAtUtc} />
 
       <div className="ml-auto flex items-center gap-2">
+        <ThemeToggle />
         <Button size="sm" variant="outline" onClick={onExport}>
           <Download className="mr-1.5 h-4 w-4" />
           Export PNG

@@ -1,4 +1,5 @@
 using Acme.Application.Auth;
+using Acme.Domain.Subscriptions;
 using Acme.Domain.Users;
 using MongoDB.Driver;
 
@@ -11,7 +12,6 @@ public sealed class MongoUserRepository : IUserRepository
 
     public MongoUserRepository(MongoContext ctx)
     {
-        // Indexes are declared centrally in MongoIndexInitializer — see startup.
         _collection = ctx.Collection<UserDocument>(CollectionName);
     }
 
@@ -45,10 +45,18 @@ public sealed class MongoUserRepository : IUserRepository
         Email = u.Email.Value,
         DisplayName = u.DisplayName,
         PasswordHash = u.PasswordHash.Value,
+        Tier = (int)u.Tier,
         CreatedAtUtc = u.CreatedAtUtc,
         UpdatedAtUtc = u.UpdatedAtUtc,
     };
 
     private static User ToDomain(UserDocument d) =>
-        UserMapper.Hydrate(d.Id, d.Email, d.DisplayName, d.PasswordHash, d.CreatedAtUtc, d.UpdatedAtUtc);
+        UserMapper.Hydrate(
+            d.Id,
+            d.Email,
+            d.DisplayName,
+            d.PasswordHash,
+            (SubscriptionTier)d.Tier,
+            d.CreatedAtUtc,
+            d.UpdatedAtUtc);
 }

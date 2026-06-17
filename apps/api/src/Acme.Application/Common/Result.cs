@@ -1,6 +1,5 @@
 namespace Acme.Application.Common;
 
-/// <summary>Lightweight Result type for use-case outcomes.</summary>
 public readonly record struct Result<T>
 {
     public T? Value { get; }
@@ -21,6 +20,7 @@ public readonly record struct Result<T>
     public static Result<T> Conflict(string error) => new(default, error, ResultKind.Conflict);
     public static Result<T> Invalid(string error) => new(default, error, ResultKind.Invalid);
     public static Result<T> Unauthorized(string error) => new(default, error, ResultKind.Unauthorized);
+    public static Result<T> Forbidden(string error) => new(default, error, ResultKind.Forbidden);
 }
 
 public enum ResultKind
@@ -30,4 +30,5 @@ public enum ResultKind
     Conflict,
     Invalid,
     Unauthorized,
+    Forbidden,
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Layer, Rect, Stage, Transformer } from "react-konva";
+import { Layer, Rect, Stage, Text as KonvaText, Transformer } from "react-konva";
 import type Konva from "konva";
 import type { Shape } from "@acme/shared-types";
 import { ShapeNode } from "@/components/editor/shapes/ShapeNode";
@@ -13,6 +13,7 @@ import {
   nextZIndex,
 } from "@/lib/canvas/shape-factories";
 import { useEditorStore } from "@/store/editor-store";
+import { useSubscriptionStore } from "@/store/subscription-store";
 
 interface EditorCanvasProps {
   width: number;
@@ -33,6 +34,7 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
   const updateShape = useEditorStore((s) => s.updateShape);
   const updateShapeLive = useEditorStore((s) => s.updateShapeLive);
   const commitHistory = useEditorStore((s) => s.commitHistory);
+  const watermark = useSubscriptionStore((s) => s.current?.plan.watermark ?? false);
 
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
@@ -214,6 +216,18 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
               }
             />
           ))}
+
+          {watermark && (
+            <KonvaText
+              x={doc.width - 320}
+              y={doc.height - 40}
+              text="Made with Pharmacy Poster · pharmacyposter.app"
+              fontSize={16}
+              fontFamily="Inter, sans-serif"
+              fill="rgba(15, 23, 42, 0.55)"
+              listening={false}
+            />
+          )}
 
           <Transformer
             ref={transformerRef}

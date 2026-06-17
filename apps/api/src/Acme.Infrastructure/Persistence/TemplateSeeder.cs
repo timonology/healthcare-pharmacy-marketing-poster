@@ -81,6 +81,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "scale":{"x":1,"y":1},"opacity":0.18,"draggable":true,"zIndex":2,
            "radius":220,"fill":"#06b6d4"},
 
+          {"id":"hero-img","kind":"image","position":{"x":320,"y":900},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "blobKey":"https://images.unsplash.com/photo-1612277795421-9bc7706a4a34?w=900&q=80&auto=format&fit=crop",
+           "width":600,"height":400},
+
           {"id":"headline-1","kind":"text","position":{"x":80,"y":200},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
            "text":"FLU SHOTS","fontSize":110,"fontFamily":"Inter, sans-serif",
@@ -175,6 +180,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
            "text":"•  Reduced immune resilience","fontSize":30,
            "fontFamily":"Inter, sans-serif","fill":"#1f2937"},
+
+          {"id":"hero-img","kind":"image","position":{"x":320,"y":940},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "blobKey":"https://images.unsplash.com/photo-1559757175-5700dde675bc?w=900&q=80&auto=format&fit=crop",
+           "width":600,"height":300},
 
           {"id":"box","kind":"rect","position":{"x":80,"y":1280},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
@@ -530,6 +540,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
            "text":"Free 5-minute chats","fontSize":20,
            "fontFamily":"Inter, sans-serif","fill":"#064e3b","width":280,"align":"left"},
+
+          {"id":"hero-img","kind":"image","position":{"x":240,"y":870},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "blobKey":"https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1000&q=80&auto=format&fit=crop",
+           "width":760,"height":180},
 
           {"id":"contact","kind":"rect","position":{"x":80,"y":1080},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,

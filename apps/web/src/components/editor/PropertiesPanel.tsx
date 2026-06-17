@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CircleShape,
+  ImageShape,
   LineShape,
   RectShape,
   Shape,
   ShapeId,
   TextShape,
 } from "@acme/shared-types";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
+import { prepareImage } from "@/lib/canvas/image-upload";
 import { useEditorStore } from "@/store/editor-store";
 
 export function PropertiesPanel() {
@@ -33,6 +36,7 @@ export function PropertiesPanel() {
         {shape.kind === "circle" && <CircleSection shape={shape} />}
         {shape.kind === "text" && <TextSection shape={shape} />}
         {shape.kind === "line" && <LineSection shape={shape} />}
+        {shape.kind === "image" && <ImageSection shape={shape} />}
       </div>
     </ScrollArea>
   );
@@ -252,6 +256,103 @@ function LineSection({ shape }: { shape: LineShape }) {
         value={shape.strokeWidth}
         onCommit={(v) => updateShape(shape.id, { strokeWidth: v })}
       />
+    </section>
+  );
+}
+
+function ImageSection({ shape }: { shape: ImageShape }) {
+  const updateShape = useEditorStore((s) => s.updateShape);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const aspect = shape.width / Math.max(1, shape.height);
+
+  async function onReplace(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await prepareImage(file);
+      const newWidth = shape.width;
+      const newHeight = Math.round(newWidth * (next.height / next.width));
+      updateShape(shape.id, {
+        blobKey: next.dataUrl,
+        width: newWidth,
+        height: newHeight,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load image.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <Label className="text-xs">Preview</Label>
+        <div className="mt-1 flex items-center justify-center rounded-md border bg-muted p-2">
+          {shape.blobKey ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={shape.blobKey}
+              alt=""
+              className="max-h-32 max-w-full object-contain"
+            />
+          ) : (
+            <span className="text-xs text-muted-foreground">No image</span>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <NumberRow
+          label="Width"
+          value={shape.width}
+          onCommit={(v) =>
+            updateShape(shape.id, {
+              width: v,
+              height: Math.round(v / aspect),
+            })
+          }
+        />
+        <NumberRow
+          label="Height"
+          value={shape.height}
+          onCommit={(v) =>
+            updateShape(shape.id, {
+              height: v,
+              width: Math.round(v * aspect),
+            })
+          }
+        />
+      </div>
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={() => fileRef.current?.click()}
+        disabled={busy}
+      >
+        {busy ? "Replacing…" : "Replace image"}
+      </Button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onReplace}
+      />
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
     </section>
   );
 }

@@ -7,12 +7,15 @@
 import type {
   BrandKit,
   CreatePosterRequest,
+  CurrentSubscription,
   LoginRequest,
   PagedResponse,
+  Plan,
   Poster,
   PosterStatus,
   PosterSummary,
   RegisterRequest,
+  SubscriptionTier,
   Template,
   TemplateCategory,
   TemplateSummary,
@@ -187,6 +190,27 @@ export const api = {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
+        credentials: "same-origin",
+      }),
+    ),
+
+  // ---- Subscription ----
+  getCurrentSubscription: async () =>
+    jsonOrThrow<CurrentSubscription>(
+      await fetch("/api/subscription/current", { credentials: "same-origin" }),
+    ),
+
+  listPlans: async () =>
+    jsonOrThrow<Plan[]>(
+      await fetch("/api/subscription/plans", { credentials: "same-origin" }),
+    ),
+
+  upgradeSubscription: async (tier: SubscriptionTier) =>
+    jsonOrThrow<CurrentSubscription>(
+      await fetch("/api/subscription/upgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }),
         credentials: "same-origin",
       }),
     ),
