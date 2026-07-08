@@ -17,7 +17,7 @@ export default function LoginPage() {
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-background via-background to-primary/[0.04]">
       <BackgroundDecor />
 
-      <div className="absolute left-4 top-4 flex items-center gap-2 md:left-6 md:top-6">
+      <div className="absolute left-4 top-4 z-20 flex items-center gap-2 md:left-6 md:top-6">
         <Button asChild variant="ghost" size="sm">
           <Link href="/">
             <ArrowLeft className="mr-1.5 h-4 w-4" />
@@ -26,14 +26,14 @@ export default function LoginPage() {
         </Button>
       </div>
 
-      <div className="absolute right-4 top-4 md:right-6 md:top-6">
+      <div className="absolute right-4 top-4 z-20 md:right-6 md:top-6">
         <ThemeToggle />
       </div>
 
       <main className="container relative flex min-h-screen items-center justify-center px-4 py-16">
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-cyan-500 text-primary-foreground shadow-lg">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-lg">
               <Pill className="h-6 w-6" />
             </span>
             <h1 className="mt-5 text-2xl font-bold tracking-tight">
@@ -87,7 +87,8 @@ function LoginForm() {
     try {
       const { user } = await api.login({ email, password });
       setUser(user);
-      const target = sanitizeRedirect(params.get("redirect")) ?? "/brand-kit";
+      const fallback = user.onboardingCompleted ? "/dashboard" : "/onboarding";
+      const target = sanitizeRedirect(params.get("redirect")) ?? fallback;
       window.location.assign(target);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -166,7 +167,7 @@ function LoginForm() {
 
       <Button
         type="submit"
-        className="w-full bg-gradient-to-r from-primary to-cyan-500 text-primary-foreground hover:opacity-90"
+        className="w-full bg-gradient-to-r from-primary to-emerald-500 text-primary-foreground hover:opacity-90"
         disabled={pending}
       >
         {pending ? "Signing in…" : "Sign in"}
@@ -224,7 +225,7 @@ function BackgroundDecor() {
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -bottom-40 right-1/4 -z-10 h-[420px] w-[420px] rounded-full bg-cyan-400/10 blur-[120px] dark:bg-cyan-400/5"
+        className="pointer-events-none absolute -bottom-40 right-1/4 -z-10 h-[420px] w-[420px] rounded-full bg-emerald-400/10 blur-[120px] dark:bg-emerald-400/5"
       />
     </>
   );

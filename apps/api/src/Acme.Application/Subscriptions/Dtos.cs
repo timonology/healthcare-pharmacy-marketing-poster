@@ -8,6 +8,8 @@ public sealed record PlanDto(
     decimal MonthlyPriceGbp,
     int MaxPosters,
     int MaxAiGenerationsPerMonth,
+    int MaxCampaignRecipientsPerMonth,
+    int MaxPatients,
     bool Watermark,
     bool CustomTemplates,
     bool EmailExport,
@@ -19,7 +21,9 @@ public sealed record PlanDto(
 
 public sealed record UsageDto(
     int Posters,
-    int AiGenerationsThisMonth);
+    int AiGenerationsThisMonth,
+    int CampaignRecipientsThisMonth,
+    int Patients);
 
 public sealed record CurrentSubscriptionDto(
     PlanDto Plan,

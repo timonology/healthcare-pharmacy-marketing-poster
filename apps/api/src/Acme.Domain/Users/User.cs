@@ -9,6 +9,7 @@ public sealed class User : Entity
     public string DisplayName { get; private set; } = default!;
     public PasswordHash PasswordHash { get; private set; } = default!;
     public SubscriptionTier Tier { get; private set; } = SubscriptionTier.Free;
+    public PharmacyProfile Profile { get; private set; } = PharmacyProfile.Empty();
 
     private User() { }
 
@@ -19,6 +20,7 @@ public sealed class User : Entity
         DisplayName = displayName;
         PasswordHash = passwordHash;
         Tier = SubscriptionTier.Free;
+        Profile = PharmacyProfile.Empty();
     }
 
     public static User Register(Email email, string displayName, PasswordHash passwordHash)
@@ -48,6 +50,12 @@ public sealed class User : Entity
     public void ChangeTier(SubscriptionTier tier)
     {
         Tier = tier;
+        Touch();
+    }
+
+    public void SetProfile(PharmacyProfile profile)
+    {
+        Profile = profile;
         Touch();
     }
 }

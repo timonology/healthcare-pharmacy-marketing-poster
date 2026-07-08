@@ -1,5 +1,7 @@
 using Acme.Application.Auth;
+using Acme.Application.Campaigns;
 using Acme.Application.Common;
+using Acme.Application.Patients;
 using Acme.Application.Posters;
 using Acme.Domain.Subscriptions;
 
@@ -7,7 +9,9 @@ namespace Acme.Application.Subscriptions;
 
 public sealed class SubscriptionService(
     IUserRepository users,
-    IPosterRepository posters)
+    IPosterRepository posters,
+    ICampaignRepository campaigns,
+    IPatientRepository patients)
 {
     public async Task<Result<CurrentSubscriptionDto>> GetCurrentAsync(string userId, CancellationToken ct)
     {
@@ -16,10 +20,12 @@ public sealed class SubscriptionService(
 
         var plan = Plans.For(user.Tier);
         var posterCount = await posters.CountAsync(new PosterQuery(userId), ct);
+        var recipientsThisMonth = await campaigns.CountRecipientsThisMonthAsync(userId, ct);
+        var patientCount = await patients.CountByOwnerAsync(userId, ct);
 
         return Result<CurrentSubscriptionDto>.Success(new CurrentSubscriptionDto(
             ToDto(plan),
-            new UsageDto(posterCount, AiGenerationsThisMonth: 0)));
+            new UsageDto(posterCount, AiGenerationsThisMonth: 0, recipientsThisMonth, patientCount)));
     }
 
     public IReadOnlyList<PlanDto> GetPlans() =>
@@ -48,6 +54,8 @@ public sealed class SubscriptionService(
         p.MonthlyPriceGbp,
         p.MaxPosters,
         p.MaxAiGenerationsPerMonth,
+        p.MaxCampaignRecipientsPerMonth,
+        p.MaxPatients,
         p.Watermark,
         p.CustomTemplates,
         p.EmailExport,

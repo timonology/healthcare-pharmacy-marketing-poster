@@ -203,6 +203,9 @@ export default function MyPostersPage() {
                   <Link href={`/posters/${p.id}`}>Open</Link>
                 </Button>
                 <div className="flex gap-1">
+                  <Button asChild size="sm" variant="ghost" title="Download as PDF">
+                    <a href={api.posterPdfUrl(p.id)}>PDF</a>
+                  </Button>
                   <Button
                     size="sm"
                     variant="ghost"

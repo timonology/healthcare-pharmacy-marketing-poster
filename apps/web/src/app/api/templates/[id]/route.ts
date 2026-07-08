@@ -7,7 +7,8 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
-  const result = await apiFetch<Template>(`/api/templates/${id}`, { auth: true });
+  // Anonymous — guests can preview templates before deciding to sign up.
+  const result = await apiFetch<Template>(`/api/templates/${id}`);
   if (!result.ok || !result.data) {
     return NextResponse.json(
       { error: result.error ?? "Failed to load template." },

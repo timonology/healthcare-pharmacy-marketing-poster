@@ -221,7 +221,7 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
             <KonvaText
               x={doc.width - 320}
               y={doc.height - 40}
-              text="Made with Pharmacy Poster · pharmacyposter.app"
+              text="Made with Sonar Marketing25 · pharmacyposter.app"
               fontSize={16}
               fontFamily="Inter, sans-serif"
               fill="rgba(15, 23, 42, 0.55)"

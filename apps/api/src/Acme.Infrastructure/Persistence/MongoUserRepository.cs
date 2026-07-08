@@ -46,17 +46,41 @@ public sealed class MongoUserRepository : IUserRepository
         DisplayName = u.DisplayName,
         PasswordHash = u.PasswordHash.Value,
         Tier = (int)u.Tier,
+        Profile = new PharmacyProfileDocument
+        {
+            PharmacyName = u.Profile.PharmacyName,
+            Address = u.Profile.Address,
+            PostCode = u.Profile.PostCode,
+            Description = u.Profile.Description,
+            ContactName = u.Profile.ContactName,
+            ContactPhone = u.Profile.ContactPhone,
+            SonarFCode = u.Profile.SonarFCode,
+            OnboardingCompleted = u.Profile.OnboardingCompleted,
+        },
         CreatedAtUtc = u.CreatedAtUtc,
         UpdatedAtUtc = u.UpdatedAtUtc,
     };
 
-    private static User ToDomain(UserDocument d) =>
-        UserMapper.Hydrate(
+    private static User ToDomain(UserDocument d)
+    {
+        var profile = new PharmacyProfile(
+            d.Profile?.PharmacyName ?? string.Empty,
+            d.Profile?.Address ?? string.Empty,
+            d.Profile?.PostCode ?? string.Empty,
+            d.Profile?.Description ?? string.Empty,
+            d.Profile?.ContactName ?? string.Empty,
+            d.Profile?.ContactPhone ?? string.Empty,
+            d.Profile?.SonarFCode,
+            d.Profile?.OnboardingCompleted ?? false);
+
+        return UserMapper.Hydrate(
             d.Id,
             d.Email,
             d.DisplayName,
             d.PasswordHash,
             (SubscriptionTier)d.Tier,
+            profile,
             d.CreatedAtUtc,
             d.UpdatedAtUtc);
+    }
 }

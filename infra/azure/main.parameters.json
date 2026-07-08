@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": { "value": "pharmposter" },
+    "appServiceSku": { "value": "B1" },
+    "cosmosThroughput": { "value": 400 },
+    "jwtSecret": {
+      "value": "REPLACE_ME_WITH_64_CHAR_RANDOM_STRING"
+    }
+  }
+}

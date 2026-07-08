@@ -16,6 +16,7 @@ internal static class UserMapper
         string displayName,
         string passwordHash,
         SubscriptionTier tier,
+        PharmacyProfile profile,
         DateTime createdAtUtc,
         DateTime updatedAtUtc)
     {
@@ -26,6 +27,7 @@ internal static class UserMapper
         SetProp(user, nameof(User.DisplayName), displayName);
         SetProp(user, nameof(User.PasswordHash), PasswordHash.FromHash(passwordHash));
         SetProp(user, nameof(User.Tier), tier);
+        SetProp(user, nameof(User.Profile), profile);
         SetProp(user, nameof(User.CreatedAtUtc), createdAtUtc);
         SetProp(user, nameof(User.UpdatedAtUtc), updatedAtUtc);
 

@@ -6,10 +6,23 @@
 
 import type {
   BrandKit,
+  BulkAddToGroupRequest,
+  BulkDeleteRequest,
+  BulkImportRequest,
+  BulkImportResult,
+  Campaign,
+  CampaignAudiencePreview,
+  CampaignAudienceRequest,
+  CreateCampaignRequest,
   CreatePosterRequest,
   CurrentSubscription,
   LoginRequest,
+  Me,
+  OnboardRequest,
   PagedResponse,
+  Patient,
+  PatientGroup,
+  PatientListResponse,
   Plan,
   Poster,
   PosterStatus,
@@ -21,6 +34,9 @@ import type {
   TemplateSummary,
   UpdatePosterRequest,
   UpsertBrandKitRequest,
+  UpsertPatientGroupRequest,
+  UpsertPatientRequest,
+  UpsertProfileRequest,
   UserProfile,
 } from "@acme/shared-types";
 
@@ -35,6 +51,13 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+/**
+ * Default fetch options for client-side calls to our own BFF.
+ * `no-store` prevents stale Me / subscription responses from causing
+ * onboarding-loop redirects after login.
+ */
+const FETCH_OPTS = { credentials: "same-origin", cache: "no-store" } as const;
 
 function qs(params: Record<string, string | number | undefined | null>) {
   const usp = new URLSearchParams();
@@ -84,7 +107,7 @@ export const api = {
 
   me: async () =>
     jsonOrThrow<UserProfile>(
-      await fetch("/api/auth/me", { credentials: "same-origin" }),
+      await fetch("/api/auth/me", FETCH_OPTS),
     ),
 
   // ---- Brand Kit ----
@@ -197,7 +220,7 @@ export const api = {
   // ---- Subscription ----
   getCurrentSubscription: async () =>
     jsonOrThrow<CurrentSubscription>(
-      await fetch("/api/subscription/current", { credentials: "same-origin" }),
+      await fetch("/api/subscription/current", FETCH_OPTS),
     ),
 
   listPlans: async () =>
@@ -211,6 +234,208 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tier }),
+        credentials: "same-origin",
+      }),
+    ),
+
+  // ---- Profile / Me ----
+  getMe: async () =>
+    jsonOrThrow<Me>(
+      await fetch("/api/me/full", FETCH_OPTS),
+    ),
+
+  updateProfile: async (body: UpsertProfileRequest) =>
+    jsonOrThrow<Me>(
+      await fetch("/api/me/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  onboard: async (body: OnboardRequest) =>
+    jsonOrThrow<Me>(
+      await fetch("/api/me/onboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  // ---- Campaigns ----
+  listCampaigns: async () =>
+    jsonOrThrow<Campaign[]>(
+      await fetch("/api/campaigns", { credentials: "same-origin" }),
+    ),
+
+  createCampaign: async (body: CreateCampaignRequest) =>
+    jsonOrThrow<Campaign>(
+      await fetch("/api/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  stopCampaign: async (id: string) =>
+    jsonOrThrow<Campaign>(
+      await fetch(`/api/campaigns/${id}/stop`, {
+        method: "POST",
+        credentials: "same-origin",
+      }),
+    ),
+
+  retryCampaign: async (id: string) =>
+    jsonOrThrow<Campaign>(
+      await fetch(`/api/campaigns/${id}/retry`, {
+        method: "POST",
+        credentials: "same-origin",
+      }),
+    ),
+
+  // ---- Sharing ----
+  sharePosterByEmail: async (
+    id: string,
+    body: { recipients: string[]; subject?: string; message?: string },
+  ) =>
+    jsonOrThrow<{ sent: number; failed: number; note?: string }>(
+      await fetch(`/api/posters/${id}/share-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  posterPdfUrl: (id: string) => `/api/posters/${id}/export.pdf`,
+
+  // ---- Patients ----
+  listPatients: async (params: {
+    search?: string;
+    groupId?: string;
+    skip?: number;
+    take?: number;
+  } = {}) =>
+    jsonOrThrow<PatientListResponse>(
+      await fetch(`/api/patients${qs(params)}`, { credentials: "same-origin" }),
+    ),
+
+  getPatient: async (id: string) =>
+    jsonOrThrow<Patient>(
+      await fetch(`/api/patients/${id}`, { credentials: "same-origin" }),
+    ),
+
+  createPatient: async (body: UpsertPatientRequest) =>
+    jsonOrThrow<Patient>(
+      await fetch("/api/patients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  updatePatient: async (id: string, body: UpsertPatientRequest) =>
+    jsonOrThrow<Patient>(
+      await fetch(`/api/patients/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  deletePatient: async (id: string) => {
+    const res = await fetch(`/api/patients/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  },
+
+  bulkDeletePatients: async (body: BulkDeleteRequest) => {
+    const res = await fetch("/api/patients/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      credentials: "same-origin",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  },
+
+  bulkAddPatientsToGroup: async (body: BulkAddToGroupRequest) =>
+    jsonOrThrow<{ added: number }>(
+      await fetch("/api/patients/bulk-add-to-group", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  bulkImportPatients: async (body: BulkImportRequest) =>
+    jsonOrThrow<BulkImportResult>(
+      await fetch("/api/patients/bulk-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  // ---- Patient Groups ----
+  listPatientGroups: async () =>
+    jsonOrThrow<PatientGroup[]>(
+      await fetch("/api/patient-groups", { credentials: "same-origin" }),
+    ),
+
+  getPatientGroup: async (id: string) =>
+    jsonOrThrow<PatientGroup>(
+      await fetch(`/api/patient-groups/${id}`, { credentials: "same-origin" }),
+    ),
+
+  createPatientGroup: async (body: UpsertPatientGroupRequest) =>
+    jsonOrThrow<PatientGroup>(
+      await fetch("/api/patient-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  updatePatientGroup: async (id: string, body: UpsertPatientGroupRequest) =>
+    jsonOrThrow<PatientGroup>(
+      await fetch(`/api/patient-groups/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      }),
+    ),
+
+  deletePatientGroup: async (id: string) => {
+    const res = await fetch(`/api/patient-groups/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  },
+
+  listPatientGroupMembers: async (id: string) =>
+    jsonOrThrow<Patient[]>(
+      await fetch(`/api/patient-groups/${id}/members`, { credentials: "same-origin" }),
+    ),
+
+  campaignAudiencePreview: async (body: CampaignAudienceRequest) =>
+    jsonOrThrow<CampaignAudiencePreview>(
+      await fetch("/api/campaigns/audience-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
         credentials: "same-origin",
       }),
     ),

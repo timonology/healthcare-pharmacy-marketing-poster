@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { api } from "@/lib/api";
+import { setPendingSignup } from "@/lib/pending-signup";
 import { useAuthStore } from "@/store/auth-store";
 
 const SUGGESTED_BRAND_COLORS = [
@@ -25,6 +26,8 @@ export default function RegisterPage() {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [postCode, setPostCode] = useState("");
+  const [sonarFCode, setSonarFCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [brandColor, setBrandColor] = useState(SUGGESTED_BRAND_COLORS[0]);
@@ -38,6 +41,14 @@ export default function RegisterPage() {
 
     if (password !== confirmPassword) {
       setError("Passwords don't match.");
+      return;
+    }
+    if (!sonarFCode.trim()) {
+      setError("ODS / F code is required.");
+      return;
+    }
+    if (!postCode.trim()) {
+      setError("Postcode is required.");
       return;
     }
     if (!acceptTerms) {
@@ -55,9 +66,17 @@ export default function RegisterPage() {
         displayName: fullName,
       });
       setUser(user);
-      // Pharmacy name, phone, and brand color are collected here for onboarding;
-      // user fills them into the Brand Kit page next.
-      window.location.assign("/brand-kit");
+      // The register API only takes email/password/name. Stash the pharmacy
+      // info collected here so /onboarding and /brand-kit can pre-fill from it.
+      setPendingSignup({
+        pharmacyName: pharmacyName.trim(),
+        contactName: fullName,
+        phone: phone.trim(),
+        postCode: postCode.trim().toUpperCase(),
+        sonarFCode: sonarFCode.trim().toUpperCase(),
+        brandColor,
+      });
+      window.location.assign("/onboarding");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
       setPending(false);
@@ -68,7 +87,7 @@ export default function RegisterPage() {
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-background via-background to-primary/[0.04]">
       <BackgroundDecor />
 
-      <div className="absolute left-4 top-4 flex items-center gap-2 md:left-6 md:top-6">
+      <div className="absolute left-4 top-4 z-20 flex items-center gap-2 md:left-6 md:top-6">
         <Button asChild variant="ghost" size="sm">
           <Link href="/">
             <ArrowLeft className="mr-1.5 h-4 w-4" />
@@ -77,14 +96,14 @@ export default function RegisterPage() {
         </Button>
       </div>
 
-      <div className="absolute right-4 top-4 md:right-6 md:top-6">
+      <div className="absolute right-4 top-4 z-20 md:right-6 md:top-6">
         <ThemeToggle />
       </div>
 
       <main className="container relative flex min-h-screen items-center justify-center px-4 py-16">
         <div className="w-full max-w-lg">
           <div className="flex flex-col items-center text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-cyan-500 text-primary-foreground shadow-lg">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-lg">
               <Pill className="h-6 w-6" />
             </span>
             <h1 className="mt-5 text-2xl font-bold tracking-tight">
@@ -107,6 +126,30 @@ export default function RegisterPage() {
                   value={pharmacyName}
                   onChange={(e) => setPharmacyName(e.target.value)}
                   placeholder="Acme Community Pharmacy"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="sonarFCode">ODS / F code</Label>
+                <Input
+                  id="sonarFCode"
+                  value={sonarFCode}
+                  onChange={(e) => setSonarFCode(e.target.value.toUpperCase())}
+                  placeholder="FA123"
+                  autoCapitalize="characters"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="postCode">Postcode</Label>
+                <Input
+                  id="postCode"
+                  value={postCode}
+                  onChange={(e) => setPostCode(e.target.value.toUpperCase())}
+                  placeholder="SW1A 1AA"
+                  autoCapitalize="characters"
                   required
                 />
               </div>
@@ -234,7 +277,7 @@ export default function RegisterPage() {
 
             <Button
               type="submit"
-              className="w-full bg-gradient-to-r from-primary to-cyan-500 text-primary-foreground hover:opacity-90"
+              className="w-full bg-gradient-to-r from-primary to-emerald-500 text-primary-foreground hover:opacity-90"
               disabled={pending}
             >
               {pending ? "Creating your account…" : "Create free account"}

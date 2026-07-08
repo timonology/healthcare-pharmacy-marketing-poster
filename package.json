@@ -13,6 +13,16 @@
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "compose:up": "docker compose up -d",
-    "compose:down": "docker compose down"
+    "compose:down": "docker compose down",
+    "docker:web": "docker build -f apps/web/Dockerfile -t infosonarinformatics/sonar-marketing-auth:dev .",
+    "docker:api": "docker build -f apps/api/Dockerfile -t infosonarinformatics/sonarmarketingbackend:dev ./apps/api",
+    "ship": "bash scripts/deploy.sh",
+    "ship:restart": "bash scripts/deploy.sh --restart",
+    "ship:pin": "bash scripts/deploy.sh --pin",
+    "ship:bump": "bash scripts/deploy.sh --bump",
+    "release": "bash scripts/deploy.sh",
+    "release:restart": "bash scripts/deploy.sh --restart",
+    "release:pin": "bash scripts/deploy.sh --pin",
+    "release:bump": "bash scripts/deploy.sh --bump"
   }
 }

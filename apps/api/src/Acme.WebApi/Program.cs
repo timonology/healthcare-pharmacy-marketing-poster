@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using Acme.Application;
 using Acme.Application.Common;
 using Acme.Application.Templates;
@@ -15,7 +16,14 @@ builder.Configuration.AddEnvironmentVariables();
 builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.AddControllers();
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(opts =>
+    {
+        // Serialize enums as their string names ("Free", "Email", "Draft", ...)
+        // both on the wire (response) and during model binding (request).
+        opts.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 

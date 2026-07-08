@@ -28,6 +28,7 @@ export interface UserProfile {
   email: string;
   displayName: string;
   tier: SubscriptionTier;
+  onboardingCompleted: boolean;
   createdAtUtc: string;
 }
 

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import { clearPendingSignup, readPendingSignup } from "@/lib/pending-signup";
 
 const DEFAULTS: UpsertBrandKitRequest = {
   name: "My Pharmacy",
@@ -37,9 +38,44 @@ export default function BrandKitPage() {
     let cancelled = false;
     (async () => {
       try {
-        const kit = await api.getBrandKit();
+        // Brand kit may not exist yet for new users — fall back to the
+        // pharmacy profile + anything they entered on /register so the form
+        // isn't empty.
+        const [kit, me] = await Promise.all([
+          api.getBrandKit(),
+          api.getMe().catch(() => null),
+        ]);
         if (cancelled) return;
-        if (kit) populate(kit);
+
+        if (kit) {
+          populate(kit);
+        } else {
+          const pending = readPendingSignup();
+          const fcode = me?.profile.sonarFCode || pending?.sonarFCode || "";
+          const postCode = me?.profile.postCode || pending?.postCode || "";
+          const address = me?.profile.address ?? "";
+          const addressLine = postCode && address && !address.toUpperCase().includes(postCode)
+            ? `${address}, ${postCode}`
+            : address || postCode;
+          setForm((f) => ({
+            name: me?.profile.pharmacyName || pending?.pharmacyName || f.name,
+            colors: {
+              ...f.colors,
+              primary: pending?.brandColor || f.colors.primary,
+            },
+            pharmacy: {
+              ...f.pharmacy,
+              name: me?.profile.pharmacyName || pending?.pharmacyName || f.pharmacy.name,
+              phone: me?.profile.contactPhone || pending?.phone || f.pharmacy.phone,
+              address: addressLine || f.pharmacy.address,
+              licenseNumber: fcode || f.pharmacy.licenseNumber,
+            },
+            regulatoryFooter: f.regulatoryFooter,
+          }));
+          // We consumed the pending data here — clear it so a later refresh
+          // doesn't overwrite something the user has since edited.
+          clearPendingSignup();
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
       } finally {

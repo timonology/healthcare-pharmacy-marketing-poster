@@ -6,9 +6,9 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const qs = url.search; // forward all query params verbatim
 
+  // Anonymous on the API — guests can browse templates without signing in.
   const result = await apiFetch<PagedResponse<TemplateSummary>>(
     `/api/templates${qs}`,
-    { auth: true },
   );
 
   if (!result.ok || !result.data) {

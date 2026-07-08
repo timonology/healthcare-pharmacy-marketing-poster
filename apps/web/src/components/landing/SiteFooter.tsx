@@ -36,11 +36,11 @@ export function SiteFooter() {
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-cyan-500 text-primary-foreground shadow-sm">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-sm">
                 <Pill className="h-4 w-4" />
               </span>
               <span className="text-base font-semibold tracking-tight">
-                Pharmacy Poster
+                Sonar Marketing25
               </span>
             </Link>
             <p className="mt-4 max-w-xs text-sm text-muted-foreground">
@@ -68,7 +68,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-border/60 pt-8 text-xs text-muted-foreground md:flex-row">
-          <p>© {new Date().getFullYear()} Pharmacy Poster. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Sonar Marketing25. All rights reserved.</p>
           <p>Built with care for community pharmacies.</p>
         </div>
       </div>

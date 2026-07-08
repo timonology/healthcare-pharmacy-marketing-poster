@@ -20,4 +20,5 @@ public sealed record UserProfile(
     string Email,
     string DisplayName,
     SubscriptionTier Tier,
+    bool OnboardingCompleted,
     DateTime CreatedAtUtc);

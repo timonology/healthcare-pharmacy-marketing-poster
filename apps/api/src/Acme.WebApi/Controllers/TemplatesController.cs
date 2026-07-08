@@ -12,7 +12,9 @@ namespace Acme.WebApi.Controllers;
 public sealed class TemplatesController(TemplateService service) : ControllerBase
 {
     /// <summary>List published templates with optional category / search filtering.</summary>
+    /// <remarks>Anonymous — the landing page and guest browse use this endpoint.</remarks>
     [HttpGet]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PagedResponse<TemplateSummaryDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> List(
         [FromQuery] TemplateCategory? category,
@@ -27,7 +29,9 @@ public sealed class TemplatesController(TemplateService service) : ControllerBas
         return Ok(new PagedResponse<TemplateSummaryDto>(items, total, skip, take));
     }
 
+    /// <summary>Anonymous — used by the public template detail page.</summary>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(TemplateDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(string id, CancellationToken ct)

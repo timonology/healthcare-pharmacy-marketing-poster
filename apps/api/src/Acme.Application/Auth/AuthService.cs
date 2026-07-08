@@ -85,7 +85,7 @@ public sealed class AuthService(
             accessExp,
             newRaw,
             newToken.ExpiresAtUtc,
-            new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.CreatedAtUtc)));
+            new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.Profile.OnboardingCompleted, user.CreatedAtUtc)));
     }
 
     public async Task LogoutAsync(string userId, CancellationToken ct) =>
@@ -104,6 +104,6 @@ public sealed class AuthService(
             accessExp,
             raw,
             token.ExpiresAtUtc,
-            new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.CreatedAtUtc));
+            new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.Profile.OnboardingCompleted, user.CreatedAtUtc));
     }
 }

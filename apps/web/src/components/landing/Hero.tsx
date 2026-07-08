@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Play, Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PosterMockup } from "./PosterMockup";
 
@@ -31,7 +31,7 @@ export function Hero() {
               <Button
                 asChild
                 size="lg"
-                className="bg-gradient-to-r from-primary to-cyan-500 text-primary-foreground shadow-md hover:opacity-90"
+                className="bg-gradient-to-r from-primary to-emerald-500 text-primary-foreground shadow-md hover:opacity-90"
               >
                 <Link href="/register">
                   Start free
@@ -39,10 +39,7 @@ export function Hero() {
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link href="#demo">
-                  <Play className="mr-1.5 h-4 w-4" />
-                  Watch 1-min demo
-                </Link>
+                <Link href="/templates">Browse templates</Link>
               </Button>
             </div>
 

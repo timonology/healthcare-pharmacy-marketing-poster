@@ -82,7 +82,7 @@ export function PricingTeaser() {
               )}
             >
               {plan.featured && (
-                <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-gradient-to-r from-primary to-cyan-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground shadow-md">
+                <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-gradient-to-r from-primary to-emerald-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground shadow-md">
                   <Sparkles className="h-3 w-3" />
                   Most popular
                 </span>
@@ -116,7 +116,7 @@ export function PricingTeaser() {
                 className={cn(
                   "mt-6 w-full",
                   plan.featured &&
-                    "bg-gradient-to-r from-primary to-cyan-500 text-primary-foreground hover:opacity-90",
+                    "bg-gradient-to-r from-primary to-emerald-500 text-primary-foreground hover:opacity-90",
                 )}
                 variant={plan.featured ? "default" : "outline"}
               >

@@ -15,6 +15,19 @@ RUN dotnet publish src/Acme.WebApi/Acme.WebApi.csproj -c Release -o /app /p:UseA
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
+
+# Install fonts so QuestPDF / SkiaSharp can actually render text in exported
+# PDFs. Without these, TTF glyph lookup silently returns nothing and posters
+# ship as "shapes and colors with no text". fonts-liberation covers the
+# Helvetica/Arial family; fonts-dejavu-core is a broad fallback.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      fontconfig \
+      fonts-liberation \
+      fonts-dejavu-core \
+ && fc-cache -f \
+ && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 8080
 COPY --from=build /app .
 # Bind to $PORT when set (Railway), 8080 otherwise (local docker-compose).

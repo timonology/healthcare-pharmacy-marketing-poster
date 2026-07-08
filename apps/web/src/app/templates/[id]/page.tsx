@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/store/auth-store";
 
 /**
  * Single-template preview. Shows a large render of the canvas alongside the
@@ -19,6 +20,7 @@ export default function TemplatePreviewPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const id = params.id;
+  const user = useAuthStore((s) => s.user);
 
   const [template, setTemplate] = useState<Template | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +43,12 @@ export default function TemplatePreviewPage() {
 
   async function useTemplate() {
     if (!template) return;
+    // Guests can browse but must sign in to spin up a poster.
+    if (!user) {
+      const redirect = encodeURIComponent(`/templates?use=${template.id}`);
+      router.push(`/login?redirect=${redirect}`);
+      return;
+    }
     try {
       setCreating(true);
       const poster = await api.createPoster({

@@ -10,7 +10,7 @@ interface FeatureCardProps {
 
 const ACCENTS: Record<FeatureCardProps["accent"], string> = {
   blue: "from-primary/15 to-primary/5 text-primary",
-  cyan: "from-cyan-500/15 to-cyan-500/5 text-cyan-600 dark:text-cyan-400",
+  cyan: "from-cyan-500/15 to-emerald-500/5 text-cyan-600 dark:text-cyan-400",
   emerald: "from-emerald-500/15 to-emerald-500/5 text-emerald-600 dark:text-emerald-400",
   violet: "from-violet-500/15 to-violet-500/5 text-violet-600 dark:text-violet-400",
   amber: "from-amber-500/15 to-amber-500/5 text-amber-600 dark:text-amber-400",

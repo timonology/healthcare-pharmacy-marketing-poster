@@ -12,6 +12,61 @@ public sealed class MongoIndexInitializer(MongoContext ctx) : IStartupTask
         await CreateBrandKitIndexes(ct);
         await CreateTemplateIndexes(ct);
         await CreatePosterIndexes(ct);
+        await CreateCampaignIndexes(ct);
+        await CreatePatientIndexes(ct);
+        await CreatePatientGroupIndexes(ct);
+    }
+
+    private async Task CreatePatientIndexes(CancellationToken ct)
+    {
+        var col = ctx.Collection<PatientDocument>("patients");
+        await col.Indexes.CreateOneAsync(
+            new CreateIndexModel<PatientDocument>(
+                Builders<PatientDocument>.IndexKeys
+                    .Ascending(x => x.OwnerId)
+                    .Ascending(x => x.FullName),
+                new CreateIndexOptions { Name = "by_owner_name" }),
+            cancellationToken: ct);
+        await col.Indexes.CreateOneAsync(
+            new CreateIndexModel<PatientDocument>(
+                Builders<PatientDocument>.IndexKeys
+                    .Ascending(x => x.OwnerId)
+                    .Ascending(x => x.GroupIds),
+                new CreateIndexOptions { Name = "by_owner_group" }),
+            cancellationToken: ct);
+        await col.Indexes.CreateOneAsync(
+            new CreateIndexModel<PatientDocument>(
+                Builders<PatientDocument>.IndexKeys
+                    .Text(x => x.FullName)
+                    .Text(x => x.Email)
+                    .Text(x => x.Phone)
+                    .Text(x => x.Notes),
+                new CreateIndexOptions { Name = "text_search" }),
+            cancellationToken: ct);
+    }
+
+    private Task CreatePatientGroupIndexes(CancellationToken ct)
+    {
+        var col = ctx.Collection<PatientGroupDocument>("patient_groups");
+        return col.Indexes.CreateOneAsync(
+            new CreateIndexModel<PatientGroupDocument>(
+                Builders<PatientGroupDocument>.IndexKeys
+                    .Ascending(x => x.OwnerId)
+                    .Ascending(x => x.Name),
+                new CreateIndexOptions { Name = "by_owner_name" }),
+            cancellationToken: ct);
+    }
+
+    private Task CreateCampaignIndexes(CancellationToken ct)
+    {
+        var col = ctx.Collection<CampaignDocument>("campaigns");
+        return col.Indexes.CreateOneAsync(
+            new CreateIndexModel<CampaignDocument>(
+                Builders<CampaignDocument>.IndexKeys
+                    .Ascending(x => x.OwnerId)
+                    .Descending(x => x.CreatedAtUtc),
+                new CreateIndexOptions { Name = "by_owner_created" }),
+            cancellationToken: ct);
     }
 
     private Task CreateUserIndexes(CancellationToken ct)

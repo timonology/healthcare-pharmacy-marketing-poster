@@ -1,6 +1,9 @@
 using Acme.Application.Auth;
 using Acme.Application.BrandKit;
+using Acme.Application.Campaigns;
+using Acme.Application.Patients;
 using Acme.Application.Posters;
+using Acme.Application.Profile;
 using Acme.Application.Subscriptions;
 using Acme.Application.Templates;
 using Microsoft.Extensions.Configuration;
@@ -21,6 +24,10 @@ public static class DependencyInjection
         services.AddScoped<TemplateService>();
         services.AddScoped<PosterService>();
         services.AddScoped<SubscriptionService>();
+        services.AddScoped<ProfileService>();
+        services.AddScoped<CampaignService>();
+        services.AddScoped<PatientService>();
+        services.AddScoped<PatientGroupService>();
         return services;
     }
 }

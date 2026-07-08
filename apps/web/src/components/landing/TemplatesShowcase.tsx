@@ -87,9 +87,10 @@ export function TemplatesShowcase() {
 
         <div className="mt-12 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
           {TEMPLATES.map((t) => (
-            <article
+            <Link
               key={t.title}
-              className="group overflow-hidden rounded-xl border border-border/60 bg-card transition-all hover:-translate-y-0.5 hover:shadow-lg"
+              href="/templates"
+              className="group overflow-hidden rounded-xl border border-border/60 bg-card transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               <div
                 className={`aspect-[3/4] bg-gradient-to-br ${t.bg} p-3`}
@@ -110,7 +111,7 @@ export function TemplatesShowcase() {
                 <p className="truncate text-xs font-medium">{t.title}</p>
                 <p className="mt-0.5 text-[10px] text-muted-foreground">{t.category}</p>
               </div>
-            </article>
+            </Link>
           ))}
         </div>
       </div>

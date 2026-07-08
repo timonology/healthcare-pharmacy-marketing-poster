@@ -38,6 +38,7 @@ interface EditorState {
   resetEmpty: (ownerId: string) => void;
 
   setPosterName: (name: string) => void;
+  replaceDoc: (doc: CanvasDocument) => void;
 
   setTool: (tool: EditorTool) => void;
   setSelected: (id: ShapeId | null) => void;
@@ -97,6 +98,14 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     }),
 
   setPosterName: (name) => set({ posterName: name, saveStatus: "dirty" }),
+
+  replaceDoc: (doc) =>
+    set((s) => ({
+      past: capHistory([...s.past, snapshot(s.doc)]),
+      future: [],
+      doc,
+      saveStatus: "dirty",
+    })),
 
   resetEmpty: (ownerId) =>
     set({

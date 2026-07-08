@@ -27,5 +27,8 @@ export async function POST() {
   }
 
   const response = NextResponse.json({ user: result.data.user });
-  return applyAuthCookies(response, result.data);
+  return applyAuthCookies(response, {
+    ...result.data,
+    onboardingCompleted: result.data.user.onboardingCompleted,
+  });
 }

@@ -37,7 +37,7 @@ export function HowItWorks() {
         <ol className="mx-auto mt-14 grid max-w-5xl grid-cols-1 gap-8 md:grid-cols-2 md:gap-10 lg:grid-cols-4">
           {STEPS.map((step, idx) => (
             <li key={step.n} className="relative">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-cyan-500 text-sm font-bold text-primary-foreground shadow-md">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-emerald-500 text-sm font-bold text-primary-foreground shadow-md">
                 {step.n}
               </div>
               {idx < STEPS.length - 1 && (

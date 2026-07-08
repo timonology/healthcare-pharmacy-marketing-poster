@@ -10,6 +10,8 @@ export interface Plan {
   monthlyPriceGbp: number;
   maxPosters: number;
   maxAiGenerationsPerMonth: number;
+  maxCampaignRecipientsPerMonth: number;
+  maxPatients: number;
   watermark: boolean;
   customTemplates: boolean;
   emailExport: boolean;
@@ -23,6 +25,8 @@ export interface Plan {
 export interface Usage {
   posters: number;
   aiGenerationsThisMonth: number;
+  campaignRecipientsThisMonth: number;
+  patients: number;
 }
 
 export interface CurrentSubscription {

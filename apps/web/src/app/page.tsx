@@ -7,22 +7,23 @@ import { LandingNav } from "@/components/landing/LandingNav";
 import { PricingTeaser } from "@/components/landing/PricingTeaser";
 import { SiteFooter } from "@/components/landing/SiteFooter";
 import { TemplatesShowcase } from "@/components/landing/TemplatesShowcase";
-import { Testimonials } from "@/components/landing/Testimonials";
+// Testimonials hidden for now — re-enable in app/page.tsx when copy is finalised.
+// import { Testimonials } from "@/components/landing/Testimonials";
 import { TrustBar } from "@/components/landing/TrustBar";
 
 export const metadata: Metadata = {
-  title: "Pharmacy Poster — Create marketing posters in minutes",
+  title: "Sonar Marketing25 — Create marketing posters in minutes",
   description:
     "AI-powered drag & drop poster designer made for pharmacies. Print-ready templates, your brand kit auto-applied. Free forever plan.",
   openGraph: {
-    title: "Pharmacy Poster — Create marketing posters in minutes",
+    title: "Sonar Marketing25 — Create marketing posters in minutes",
     description:
       "AI-powered drag & drop poster designer made for pharmacies. Print-ready templates, your brand kit auto-applied. Free forever plan.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Pharmacy Poster",
+    title: "Sonar Marketing25",
     description:
       "AI-powered drag & drop poster designer made for pharmacies.",
   },
@@ -38,7 +39,6 @@ export default function HomePage() {
         <Features />
         <HowItWorks />
         <TemplatesShowcase />
-        <Testimonials />
         <PricingTeaser />
         <FinalCta />
       </main>

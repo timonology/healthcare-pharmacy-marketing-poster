@@ -21,12 +21,30 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/store/auth-store";
 
 type Filter = "All" | TemplateCategory;
+type SizeFilter = "All" | "A4" | "A3" | "Square" | "Story";
+
+const SIZE_FILTERS: SizeFilter[] = ["All", "A4", "A3", "Square", "Story"];
+
+function classifySize(width: number, height: number): Exclude<SizeFilter, "All"> {
+  const ratio = width / height;
+  if (Math.abs(ratio - 1) < 0.08) return "Square";
+  // A-series ratio is ~0.707 (1/√2). Both A4 and A3 use this aspect.
+  if (Math.abs(ratio - 0.707) < 0.05) {
+    // Anything >= 1500px on the long edge is "A3-class" print.
+    return Math.max(width, height) >= 2000 ? "A3" : "A4";
+  }
+  if (ratio < 0.65) return "Story";
+  return "A4";
+}
 
 export default function TemplatesPage() {
   const router = useRouter();
+  const user = useAuthStore((s) => s.user);
   const [filter, setFilter] = useState<Filter>("All");
+  const [size, setSize] = useState<SizeFilter>("All");
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [items, setItems] = useState<TemplateSummary[]>([]);
@@ -67,6 +85,12 @@ export default function TemplatesPage() {
   }, [filter, debounced]);
 
   async function useTemplate(t: TemplateSummary) {
+    // Guests can browse but must sign in to start a poster from a template.
+    if (!user) {
+      const redirect = encodeURIComponent(`/templates?use=${t.id}`);
+      router.push(`/login?redirect=${redirect}`);
+      return;
+    }
     try {
       setUsingTemplateId(t.id);
       const poster = await api.createPoster({
@@ -80,9 +104,31 @@ export default function TemplatesPage() {
     }
   }
 
+  // After a guest signs in, ?use=<id> brings them back here and we auto-start
+  // the poster they originally picked.
+  useEffect(() => {
+    if (!user) return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("use");
+    if (!id) return;
+    const target = items.find(t => t.id === id);
+    if (target) {
+      void useTemplate(target);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("use");
+      window.history.replaceState({}, "", url.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, items]);
+
+  const visibleItems = useMemo(() => {
+    if (size === "All") return items;
+    return items.filter((t) => classifySize(t.canvas.width, t.canvas.height) === size);
+  }, [items, size]);
+
   const headerCount = useMemo(
-    () => (loading ? "" : `${total} template${total === 1 ? "" : "s"}`),
-    [loading, total],
+    () => (loading ? "" : `${visibleItems.length} of ${total} template${total === 1 ? "" : "s"}`),
+    [loading, total, visibleItems.length],
   );
 
   return (
@@ -120,6 +166,17 @@ export default function TemplatesPage() {
         </div>
       </div>
 
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Size
+        </span>
+        {SIZE_FILTERS.map((s) => (
+          <FilterChip key={s} active={size === s} onClick={() => setSize(s)}>
+            {s}
+          </FilterChip>
+        ))}
+      </div>
+
       {error && (
         <p className="mt-4 text-sm text-destructive" role="alert">
           {error}
@@ -129,19 +186,24 @@ export default function TemplatesPage() {
       <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {loading
           ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
-          : items.length === 0
+          : visibleItems.length === 0
           ? (
             <p className="col-span-full text-sm text-muted-foreground">
               No templates match your filters.
             </p>
           )
-          : items.map((t) => (
+          : visibleItems.map((t) => (
             <Card key={t.id} className="flex flex-col overflow-hidden">
               <TemplateThumb summary={t} />
               <CardHeader className="flex-1">
                 <div className="flex items-start justify-between gap-2">
                   <CardTitle className="line-clamp-2">{t.name}</CardTitle>
-                  <Badge variant="secondary">{t.category}</Badge>
+                  <div className="flex gap-1.5">
+                    <Badge variant="outline" className="font-normal">
+                      {classifySize(t.canvas.width, t.canvas.height)}
+                    </Badge>
+                    <Badge variant="secondary">{t.category}</Badge>
+                  </div>
                 </div>
                 {t.description && (
                   <CardDescription className="line-clamp-2">

@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Acme.WebApi</RootNamespace>
+    <UserSecretsId>acme-pharmposter-api</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
