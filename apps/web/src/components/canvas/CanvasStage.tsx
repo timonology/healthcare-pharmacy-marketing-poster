@@ -4,6 +4,7 @@ import { Stage, Layer, Rect, Circle, Text, Line } from "react-konva";
 import type Konva from "konva";
 import { useCanvasStore } from "@/store/canvas-store";
 import type { Shape } from "@acme/shared-types";
+import { lineFill } from "@/lib/canvas/line-fill";
 
 interface CanvasStageProps {
   width: number;
@@ -99,6 +100,7 @@ function ShapeRenderer({
           stroke={shape.stroke}
           strokeWidth={shape.strokeWidth}
           closed={shape.closed}
+          fill={lineFill(shape)}
         />
       );
     case "text":

@@ -12,8 +12,49 @@ public sealed record PharmacyProfile(
     string? SonarFCode,
     bool OnboardingCompleted)
 {
+    // The booking link used to be here, as the last positional member, on the
+    // reasoning that it is the same kind of thing as the address and the phone
+    // number. It now lives on the brand kit — see PharmacyDetails.BookingUrl for
+    // why it moved and BookingLinkToBrandKitMigration for how existing ones got
+    // there. The profile still displays it; it does not hold it.
+    //
+    // Nothing here should gain a BookingUrl again. Two records holding one
+    // patient-facing URL is how a pharmacy ends up with a printed QR code
+    // pointing somewhere its own profile page disagrees with.
+
     public static PharmacyProfile Empty() =>
         new(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, null, false);
+
+    /// <summary>
+    /// The profile a staff account gets: blank, and finished.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Onboarding asks for a pharmacy name, address, postcode and contact
+    /// number. A platform administrator has none of those, so
+    /// <see cref="Empty"/> — which is <c>OnboardingCompleted: false</c> — makes
+    /// the app demand something they cannot supply, and the middleware bounces
+    /// them out of every protected page until they do. That includes the whole
+    /// admin console.
+    /// </para>
+    /// <para>
+    /// It went unnoticed because the super-admin on any long-lived environment
+    /// had been through the form by hand once, months earlier. It reappears the
+    /// moment an environment is built fresh: seed a super-admin, sign in, and be
+    /// held at a pharmacy-setup page with no admin console behind it. Recreating
+    /// a corrupted development database is what surfaced it, but a first
+    /// production deploy would have hit exactly the same wall.
+    /// </para>
+    /// <para>
+    /// Marked complete rather than exempting staff in the middleware: "a staff
+    /// account has no pharmacy to set up" is a fact about the account, and it
+    /// belongs where the account is made. A routing exemption would leave the
+    /// flag saying false, so the finish-setup prompt would follow them around
+    /// the app forever and the admin list would report them as unfinished.
+    /// </para>
+    /// </remarks>
+    public static PharmacyProfile ForStaff() =>
+        new(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, null, true);
 
     public static PharmacyProfile Create(
         string pharmacyName,
@@ -47,4 +88,5 @@ public sealed record PharmacyProfile(
             string.IsNullOrWhiteSpace(sonarFCode) ? null : sonarFCode.Trim().ToUpperInvariant(),
             OnboardingCompleted: true);
     }
+
 }

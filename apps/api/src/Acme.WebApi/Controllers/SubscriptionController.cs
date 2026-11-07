@@ -4,6 +4,7 @@ using Acme.Application.Common;
 using Acme.Application.Subscriptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Acme.WebApi.Auditing;
 
 namespace Acme.WebApi.Controllers;
 
@@ -33,7 +34,11 @@ public sealed class SubscriptionController(SubscriptionService service) : Contro
     [ProducesResponseType(typeof(IReadOnlyList<PlanDto>), StatusCodes.Status200OK)]
     public IActionResult Plans() => Ok(service.GetPlans());
 
+    // Only reachable with Stripe off, but it still changes a plan.
+    [OwnAccountOnly]
+    [Audit("subscription.upgrade", "subscription")]
     [HttpPost("upgrade")]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(CurrentSubscriptionDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Upgrade(
@@ -48,6 +53,10 @@ public sealed class SubscriptionController(SubscriptionService service) : Contro
             ResultKind.Success => Ok(result.Value),
             ResultKind.NotFound => NotFound(new { error = result.Error }),
             ResultKind.Invalid => BadRequest(new { error = result.Error }),
+            // Stripe is live — self-serve tier changes are disabled. 409 rather
+            // than 403 so the client can distinguish "not allowed here" from
+            // "not authenticated" and redirect to checkout.
+            ResultKind.Forbidden => Conflict(new { error = result.Error }),
             _ => BadRequest(new { error = result.Error }),
         };
     }

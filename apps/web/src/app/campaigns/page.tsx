@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Mail, MessageSquare, PlusCircle, RotateCcw, Search, Square } from "lucide-react";
 import type {
   Campaign,
@@ -11,6 +11,7 @@ import type {
   Patient,
   PatientGroup,
   PosterSummary,
+  Video,
 } from "@acme/shared-types";
 import { isUnlimited } from "@acme/shared-types";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +37,22 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { NoResultsInRange, SortDateControls } from "@/components/lists/SortDateControls";
+import { useListWindow } from "@/hooks/useListWindow";
+import { hasDateRange, listWindowKey, listWindowParams } from "@/lib/list-window";
 
 const PAGE_SIZE = 10;
+
+/**
+ * Mirrors `CampaignService.MaxRecipientsPerCampaign` and
+ * `ConfirmAboveRecipients`.
+ *
+ * The server enforces the cap; these only save somebody filling in a form that
+ * is going to be refused. If the two ever disagree the server wins, which is
+ * the right way round.
+ */
+const MAX_RECIPIENTS_PER_CAMPAIGN = 1000;
+const CONFIRM_ABOVE_RECIPIENTS = 200;
 
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -50,28 +65,59 @@ export default function CampaignsPage() {
 
   const [patientsList, setPatientsList] = useState<Patient[]>([]);
   const [groupsList, setGroupsList] = useState<PatientGroup[]>([]);
+  const [videosList, setVideosList] = useState<Video[]>([]);
 
   // Pagination + filtering
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | Campaign["status"]>("All");
 
+  // Sort and date range: in the URL, applied by the API (sent date, else created).
+  const { listWindow, setListWindow, ready } = useListWindow();
+  const windowKey = listWindowKey(listWindow);
+  // Read through a ref so the in-flight poll, set up once, still asks for the
+  // range showing now rather than the one showing when it started.
+  const windowRef = useRef(listWindow);
+  windowRef.current = listWindow;
+  const campaignSeq = useRef(0);
+  const loadedOnce = useRef(false);
+
+  /** Every filter back to its default. Sort is a preference and stays. */
+  function clearFilters() {
+    setSearch("");
+    setStatusFilter("All");
+    setPage(1);
+    setListWindow({ ...listWindow, from: null, to: null });
+  }
+
+  async function loadCampaigns() {
+    const mine = ++campaignSeq.current;
+    const c = await api.listCampaigns(listWindowParams(windowRef.current));
+    if (mine === campaignSeq.current) setCampaigns(c);
+  }
+
   async function refresh() {
-    const [c, s, p, pl, gl] = await Promise.all([
-      api.listCampaigns(),
+    const mine = ++campaignSeq.current;
+    const [c, s, p, pl, gl, vl] = await Promise.all([
+      api.listCampaigns(listWindowParams(windowRef.current)),
       api.getCurrentSubscription(),
       api.listPosters({ take: 100 }),
       api.listPatients({ take: 500 }).catch(() => ({ items: [], total: 0, skip: 0, take: 0 })),
       api.listPatientGroups().catch(() => [] as PatientGroup[]),
+      api.listVideos().catch(() => [] as Video[]),
     ]);
-    setCampaigns(c);
+    if (mine === campaignSeq.current) setCampaigns(c);
     setSubscription(s);
     setPosters(p.items);
     setPatientsList(pl.items);
     setGroupsList(gl);
+    // Only Ready videos are attachable; Pending/Rendering would break the send.
+    setVideosList(vl.filter(v => v.status === "Ready"));
   }
 
   useEffect(() => {
+    // Wait for the URL's sort and dates, so a shared link fetches once.
+    if (!ready) return;
     let cancelled = false;
     (async () => {
       try {
@@ -79,13 +125,60 @@ export default function CampaignsPage() {
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
+        loadedOnce.current = true;
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // A new sort or range reloads the campaigns only — posters, patients and
+  // videos for the send dialog do not depend on it.
+  useEffect(() => {
+    if (!loadedOnce.current) return;
+    setPage(1);
+    loadCampaigns().catch((err) =>
+      setError(err instanceof Error ? err.message : "Failed to load"),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowKey]);
+
+  /**
+   * Refresh while something is in flight, and stop when nothing is.
+   *
+   * Sending moved to a background worker, so creating a campaign now returns
+   * immediately with `Queued` and the counts fill in behind it. Without this the
+   * page showed "Queued · 0/1000 sent" until somebody reloaded, which looks
+   * exactly like a campaign that failed silently.
+   *
+   * Conditional on purpose. A timer that runs whenever the page is open is a
+   * request every three seconds for as long as a tab is left on the screen, for
+   * a list that changes only while a send is running.
+   */
+  const anyInFlight = campaigns.some(
+    (c) => c.status === "Queued" || c.status === "Sending",
+  );
+
+  useEffect(() => {
+    if (!anyInFlight) return;
+
+    let cancelled = false;
+    const id = setInterval(() => {
+      // Failures are ignored rather than surfaced: this is a background poll,
+      // and one dropped request should not replace the page with an error.
+      void refresh().catch(() => {});
+      if (cancelled) clearInterval(id);
+    }, 3_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyInFlight]);
 
   async function stop(id: string) {
     setBusyId(id);
@@ -120,12 +213,12 @@ export default function CampaignsPage() {
     ? subscription.plan.maxCampaignRecipientsPerMonth !== 0
     : false;
 
-  // Newest first, then filter by search + status, then slice into a page.
+  // Already sorted and date-ranged by the API; search and status narrow it
+  // here, then it is sliced into pages. No re-sort: the server's order (sent
+  // date, else created) is the one the Sort control promises.
   const filteredCampaigns = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return campaigns
-      .slice()
-      .sort((a, b) => Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc))
       .filter((c) => statusFilter === "All" || c.status === statusFilter)
       .filter((c) => !needle || c.name.toLowerCase().includes(needle));
   }, [campaigns, search, statusFilter]);
@@ -211,7 +304,9 @@ export default function CampaignsPage() {
       )}
 
       {/* Filters — only rendered once there's something worth filtering */}
-      {!loading && campaigns.length > 0 && (
+      {/* A date range that matches nothing still needs its controls, or it
+          could not be undone. */}
+      {!loading && (campaigns.length > 0 || hasDateRange(listWindow)) && (
         <div className="mt-6 flex flex-wrap items-center gap-2">
           <div className="relative w-full max-w-xs">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -233,14 +328,23 @@ export default function CampaignsPage() {
           >
             <option value="All">All statuses</option>
             <option value="Draft">Draft</option>
+            {/*
+              Queued is the state every campaign now starts in, so leaving it
+              out of the filter hid the newest ones — the list would go empty
+              on "Sending" for a campaign that had just been created. The type
+              is Campaign["status"], which already had it; only the menu did
+              not, so nothing failed the build.
+            */}
+            <option value="Queued">Queued</option>
             <option value="Sending">Sending</option>
             <option value="Sent">Sent</option>
             <option value="Failed">Failed</option>
             <option value="Stopped">Stopped</option>
           </select>
-          <span className="ml-auto text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {filteredCampaigns.length} of {campaigns.length}
           </span>
+          <SortDateControls value={listWindow} onChange={setListWindow} dateField="Sent (or created)" />
         </div>
       )}
 
@@ -248,6 +352,8 @@ export default function CampaignsPage() {
       <section className="mt-4">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : campaigns.length === 0 && hasDateRange(listWindow) ? (
+          <NoResultsInRange onClear={clearFilters} />
         ) : campaigns.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
@@ -292,7 +398,11 @@ export default function CampaignsPage() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{c.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {c.channel} · {c.sentCount}/{c.recipientCount} sent ·{" "}
+                      {c.channel} · {c.sentCount}/{c.recipientCount} sent
+                      {c.videoIds.length > 0 && (
+                        <span> · {c.videoIds.length} video{c.videoIds.length === 1 ? "" : "s"}</span>
+                      )}
+                      {" "}·{" "}
                       {new Date(c.createdAtUtc).toLocaleDateString()}
                     </p>
                     {c.note && (
@@ -316,7 +426,7 @@ export default function CampaignsPage() {
 
                 <div className="flex shrink-0 items-center gap-2">
                   <StatusBadge status={c.status} />
-                  {(c.status === "Sending" || c.status === "Draft") && (
+                  {(c.status === "Queued" || c.status === "Sending" || c.status === "Draft") && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -327,7 +437,23 @@ export default function CampaignsPage() {
                       Stop
                     </Button>
                   )}
-                  {c.status === "Failed" && (
+                  {/*
+                    Offered on anything with people left to reach, not only on
+                    Failed.
+
+                    A campaign that got to 700 of 1,000 is Sent, because 700
+                    people did receive it. Gating this button on Failed meant
+                    the one case the delivery report exists for had no button at
+                    all: the API would happily send to the missing 300, and
+                    there was no way to ask it to. The pharmacist's only option
+                    was to build a new campaign and work out for themselves who
+                    had already been contacted.
+
+                    Stopped is excluded deliberately. Retry refuses it, because
+                    somebody chose to halt that send.
+                  */}
+                  {(c.status === "Failed"
+                    || (c.status === "Sent" && c.sentCount < c.recipientCount)) && (
                     <Button
                       size="sm"
                       onClick={() => retry(c.id)}
@@ -335,7 +461,14 @@ export default function CampaignsPage() {
                       className="bg-brand-gradient text-primary-foreground hover:opacity-90"
                     >
                       <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                      {busyId === c.id ? "Retrying…" : "Retry"}
+                      {busyId === c.id
+                        ? "Retrying…"
+                        : c.status === "Failed"
+                          ? "Retry"
+                          // Named, so it is clear this reaches the people who
+                          // were missed rather than sending the whole list a
+                          // second time.
+                          : `Send to remaining ${c.recipientCount - c.sentCount}`}
                     </Button>
                   )}
                 </div>
@@ -379,6 +512,7 @@ export default function CampaignsPage() {
         posters={posters}
         patients={patientsList}
         groups={groupsList}
+        videos={videosList}
         remaining={remaining}
         onSent={async () => {
           await refresh();
@@ -393,6 +527,11 @@ function StatusBadge({ status }: { status: Campaign["status"] }) {
     return <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">Sent</Badge>;
   if (status === "Failed") return <Badge variant="destructive">Failed</Badge>;
   if (status === "Stopped") return <Badge variant="secondary">Stopped</Badge>;
+  // Two waiting states, and the difference is worth showing. "Queued" means
+  // accepted and safe to walk away from; "Sending" means it is going out now.
+  // Without the first, a large campaign looked like nothing had happened for
+  // the second or two before a worker picked it up.
+  if (status === "Queued") return <Badge variant="outline">Queued</Badge>;
   if (status === "Sending") return <Badge variant="outline">Sending…</Badge>;
   return <Badge variant="outline">Draft</Badge>;
 }
@@ -403,6 +542,7 @@ function NewCampaignDialog({
   posters,
   patients,
   groups,
+  videos,
   remaining,
   onSent,
 }: {
@@ -411,33 +551,63 @@ function NewCampaignDialog({
   posters: PosterSummary[];
   patients: Patient[];
   groups: PatientGroup[];
+  videos: Video[];
   remaining: number;
   onSent: () => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [posterId, setPosterId] = useState<string>("");
-  const [channel, setChannel] = useState<CampaignChannel>("Email");
+  // SMS is temporarily disabled — the backend rejects it and the UI reflects
+  // that by disabling the SMS ChannelChoice. Hard-code Email so nothing else
+  // in the component has to change.
+  const [channel] = useState<CampaignChannel>("Email");
   const [recipientsText, setRecipientsText] = useState("");
   const [patientIds, setPatientIds] = useState<string[]>([]);
   const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [videoIds, setVideoIds] = useState<string[]>([]);
   const [patientSearch, setPatientSearch] = useState("");
   const [preview, setPreview] = useState<CampaignAudiencePreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  /** Set once the sender has been warned about a large audience. */
+  const [confirmed, setConfirmed] = useState(false);
+
+  /**
+   * The posters a campaign may actually go out with.
+   *
+   * Draft means somebody is still working on it; archived means it has been
+   * retired. Neither should reach a patient's inbox, and the API refuses both —
+   * this is the same rule stated in the UI so nobody has to discover it by
+   * being rejected at the last step.
+   */
+  const sendablePosters = useMemo(
+    () => posters.filter((p) => p.status === "Published"),
+    [posters],
+  );
+
+  const posterIsSendable = useMemo(
+    () => sendablePosters.some((p) => p.id === posterId),
+    [sendablePosters, posterId],
+  );
 
   useEffect(() => {
-    if (open && !posterId && posters[0]) {
-      setPosterId(posters[0].id);
-      if (!name) setName(`${posters[0].name} — ${new Date().toLocaleDateString()}`);
+    // Preselect a poster that can actually be sent. Defaulting to posters[0]
+    // would often land on a draft, so the wizard would open with an unsendable
+    // selection and a disabled Send button for no visible reason.
+    const first = sendablePosters[0];
+    if (open && !posterId && first) {
+      setPosterId(first.id);
+      if (!name) setName(`${first.name} — ${new Date().toLocaleDateString()}`);
     }
-  }, [open, posterId, posters, name]);
+  }, [open, posterId, sendablePosters, name]);
 
   useEffect(() => {
     if (!open) {
       setRecipientsText("");
       setPatientIds([]);
       setGroupIds([]);
+      setVideoIds([]);
       setPreview(null);
       setError(null);
     }
@@ -517,12 +687,44 @@ function NewCampaignDialog({
       setError("Add at least one recipient (manual, patient, or group).");
       return;
     }
+    // The API refuses this too, and that refusal is the one that counts. Saying
+    // it here as well means the answer arrives before somebody has assembled an
+    // audience of five hundred, rather than after.
+    const chosen = posters.find((p) => p.id === posterId);
+    if (!chosen || chosen.status !== "Published") {
+      setError(
+        chosen
+          ? `'${chosen.name}' is ${chosen.status.toLowerCase()}. Open it and choose Publish before sending it to patients.`
+          : "Choose a poster to send.",
+      );
+      return;
+    }
     if (Number.isFinite(remaining) && totalRecipients > remaining) {
       setError(
         `That's ${totalRecipients} recipients but you have ${remaining} left on your plan.`,
       );
       return;
     }
+
+    // The server refuses above 1,000; this says so before the work of filling
+    // the form is wasted.
+    if (totalRecipients > MAX_RECIPIENTS_PER_CAMPAIGN) {
+      setError(
+        `A single campaign can go to at most ${MAX_RECIPIENTS_PER_CAMPAIGN.toLocaleString()} people. ` +
+          `This one has ${totalRecipients.toLocaleString()}. Split it, or narrow the group.`,
+      );
+      return;
+    }
+
+    // A large send cannot be recalled, so it should be a decision rather than
+    // the result of a click. Only above the threshold — a confirmation on every
+    // send is one people learn to dismiss without reading, which is worse than
+    // not asking.
+    if (totalRecipients > CONFIRM_ABOVE_RECIPIENTS && !confirmed) {
+      setConfirmed(true);
+      return;
+    }
+
     setPending(true);
     try {
       await api.createCampaign({
@@ -532,6 +734,7 @@ function NewCampaignDialog({
         recipients: manualRecipients,
         patientIds,
         groupIds,
+        videoIds,
       });
       await onSent();
       onOpenChange(false);
@@ -576,10 +779,25 @@ function NewCampaignDialog({
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {posters.length === 0 && <option value="">No posters available</option>}
+                {/*
+                  Unpublished posters are listed and disabled, not hidden.
+                  Somebody looking for the poster they just made needs to find
+                  it and learn why it cannot be sent yet — a poster that has
+                  simply vanished from the list looks like the app has lost it.
+                */}
                 {posters.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id} disabled={p.status !== "Published"}>
+                    {p.status === "Published" ? p.name : `${p.name} — ${p.status.toLowerCase()}, publish it first`}
+                  </option>
                 ))}
               </select>
+
+              {sendablePosters.length === 0 && posters.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  None of your posters are published yet. Open a poster and
+                  choose <strong>Publish</strong> to send it to patients.
+                </p>
+              )}
             </div>
           </div>
 
@@ -588,20 +806,79 @@ function NewCampaignDialog({
             <div className="grid grid-cols-2 gap-2">
               <ChannelChoice
                 active={channel === "Email"}
-                onClick={() => setChannel("Email")}
+                onClick={() => { /* Email is the only enabled channel */ }}
                 icon={Mail}
                 label="Email"
-                hint="PDF attached"
+                hint="PDF + video links"
               />
-              <ChannelChoice
-                active={channel === "Sms"}
-                onClick={() => setChannel("Sms")}
-                icon={MessageSquare}
-                label="SMS"
-                hint="Short message"
-              />
+              <button
+                type="button"
+                disabled
+                title="SMS campaigns are temporarily disabled"
+                className="flex cursor-not-allowed items-start gap-2 rounded-md border border-dashed border-border bg-muted/20 p-3 text-left opacity-60"
+              >
+                <MessageSquare className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">SMS</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Coming soon — email only for now
+                  </p>
+                </div>
+              </button>
             </div>
           </div>
+
+          {/* Videos — multi-select. Only Ready videos come through from the
+              parent's refresh(); Pending/Rendering aren't attachable. Empty
+              list is fine — the section just doesn't render. */}
+          {videos.length > 0 && (
+            <div className="space-y-2">
+              <Label>Attach videos <span className="text-xs text-muted-foreground">(optional, up to 5)</span></Label>
+              <div className="max-h-40 overflow-y-auto rounded-md border bg-background">
+                {videos.map(v => {
+                  const checked = videoIds.includes(v.id);
+                  const disabled = !checked && videoIds.length >= 5;
+                  return (
+                    <label
+                      key={v.id}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0",
+                        checked && "bg-primary/5",
+                        disabled && "cursor-not-allowed opacity-50",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={disabled}
+                        onChange={() => toggleId(setVideoIds, v.id)}
+                        className="shrink-0"
+                      />
+                      {v.thumbnailUrl && (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={v.thumbnailUrl}
+                          alt=""
+                          className="h-10 w-8 rounded object-cover"
+                        />
+                      )}
+                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                        <span className="truncate font-medium">{v.name}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {v.durationSeconds}s · {v.aspect}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {videoIds.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {videoIds.length} video{videoIds.length === 1 ? "" : "s"} — added as signed 48h links in the email
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Groups */}
           {groups.length > 0 && (
@@ -719,6 +996,7 @@ function NewCampaignDialog({
                     {preview.fromGroups} group · {preview.fromPatients} patient ·{" "}
                     {preview.fromManual} manual
                     {preview.invalidCount > 0 && ` · ${preview.invalidCount} skipped (missing ${channel === "Email" ? "email" : "phone"})`}
+                    {(preview.unsubscribedCount ?? 0) > 0 && ` · ${preview.unsubscribedCount} unsubscribed, left out`}
                   </p>
                 )}
               </div>
@@ -743,16 +1021,37 @@ function NewCampaignDialog({
           )}
           </div>
 
+          {confirmed && !pending && (
+            <p
+              role="alert"
+              className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+            >
+              This goes to <strong>{totalRecipients.toLocaleString()} people</strong> and
+              cannot be recalled. Press send again to confirm.
+            </p>
+          )}
+
           <DialogFooter className="shrink-0 border-t pt-4">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setConfirmed(false);
+                onOpenChange(false);
+              }}
+            >
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={pending || totalRecipients === 0}
+              disabled={pending || totalRecipients === 0 || !posterIsSendable}
               className="bg-gradient-to-r from-primary to-emerald-500 text-primary-foreground"
             >
-              {pending ? "Sending…" : `Send to ${totalRecipients}`}
+              {pending
+                ? "Sending…"
+                : confirmed
+                  ? `Yes, send to ${totalRecipients.toLocaleString()}`
+                  : `Send to ${totalRecipients.toLocaleString()}`}
             </Button>
           </DialogFooter>
         </form>

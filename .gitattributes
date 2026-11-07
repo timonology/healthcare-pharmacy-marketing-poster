@@ -1,0 +1,5 @@
+# Shell scripts run inside Linux containers, where a carriage return after
+# "#!/bin/sh" makes the kernel look for "/bin/sh\r" and the container
+# crash-loops. Always check them out with Unix line endings, on every OS.
+*.sh text eol=lf
+Dockerfile text eol=lf

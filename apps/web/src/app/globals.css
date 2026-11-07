@@ -8,6 +8,10 @@
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
+    /* Opaque on purpose. A menu drawn over the page must hide what is behind
+       it; anything translucent here reads as text colliding with the sidebar. */
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
     --muted: 180 14% 96%;
     --muted-foreground: 215.4 16.3% 46.9%;
     /* Primary shifted from cobalt blue (221°) to a clinical teal (185°) —
@@ -35,6 +39,10 @@
     --foreground: 180 25% 98%;
     --card: 195 47% 6%;
     --card-foreground: 180 25% 98%;
+    /* Slightly lifted from the dark background so a floating panel reads as
+       floating rather than as a hole cut in the page. */
+    --popover: 197 42% 10%;
+    --popover-foreground: 180 25% 98%;
     --muted: 200 22% 16%;
     --muted-foreground: 205 18% 65%;
     --primary: 175 65% 52%;
@@ -81,5 +89,22 @@
   }
   .border-brand-green {
     border-color: hsl(var(--brand-green));
+  }
+
+  /**
+   * A full viewport, minus the manage-as banner if one is showing.
+   *
+   * `h-screen` under that banner is a full viewport *starting below one*, so the
+   * page ends up taller than the window by exactly the banner's height. That
+   * turns a screen designed not to scroll into one that scrolls a little — and
+   * because the banner is sticky, scrolling slides it straight over whatever
+   * sits at the top of the page. In the poster designer that was the poster's
+   * title field, which became impossible to click.
+   *
+   * Named rather than repeated inline: three pages need it today, and the next
+   * full-height page added to the app will need it too.
+   */
+  .h-app-screen {
+    height: calc(100vh - var(--banner-h, 0px));
   }
 }

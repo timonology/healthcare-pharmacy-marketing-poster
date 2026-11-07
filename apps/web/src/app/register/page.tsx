@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, Pill, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { api } from "@/lib/api";
 import { setPendingSignup } from "@/lib/pending-signup";
 import { useAuthStore } from "@/store/auth-store";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password-policy";
+import { LogoMark } from "@/components/brand/LogoMark";
 
 const SUGGESTED_BRAND_COLORS = [
   "#0e7490",
@@ -103,9 +106,7 @@ export default function RegisterPage() {
       <main className="container relative flex min-h-screen items-center justify-center px-4 py-16">
         <div className="w-full max-w-lg">
           <div className="flex flex-col items-center text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-lg">
-              <Pill className="h-6 w-6" />
-            </span>
+            <LogoMark className="h-12 w-12" title="Marketing25" />
             <h1 className="mt-5 text-2xl font-bold tracking-tight">
               Create your free account
             </h1>
@@ -125,7 +126,7 @@ export default function RegisterPage() {
                   id="pharmacyName"
                   value={pharmacyName}
                   onChange={(e) => setPharmacyName(e.target.value)}
-                  placeholder="Acme Community Pharmacy"
+                  placeholder="Riverside Community Pharmacy"
                   required
                 />
               </div>
@@ -193,24 +194,27 @@ export default function RegisterPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
-                <Input
+                <PasswordInput
                   id="password"
-                  type="password"
                   autoComplete="new-password"
-                  minLength={8}
+                  minLength={MIN_PASSWORD_LENGTH}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  aria-describedby="password-hint"
                   required
                 />
+                <p id="password-hint" className="text-xs text-muted-foreground">
+                  At least {MIN_PASSWORD_LENGTH} characters. A short phrase of a few words works well.
+                </p>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword">Confirm password</Label>
-                <Input
+                <PasswordInput
                   id="confirmPassword"
-                  type="password"
+                  revealLabel="confirm password"
                   autoComplete="new-password"
-                  minLength={8}
+                  minLength={MIN_PASSWORD_LENGTH}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
@@ -258,11 +262,11 @@ export default function RegisterPage() {
               />
               <span>
                 I agree to the{" "}
-                <Link href="#terms" className="font-medium text-primary hover:underline">
+                <Link href="/terms" target="_blank" className="font-medium text-primary hover:underline">
                   terms of service
                 </Link>{" "}
                 and{" "}
-                <Link href="#privacy" className="font-medium text-primary hover:underline">
+                <Link href="/privacy" target="_blank" className="font-medium text-primary hover:underline">
                   privacy policy
                 </Link>
                 .

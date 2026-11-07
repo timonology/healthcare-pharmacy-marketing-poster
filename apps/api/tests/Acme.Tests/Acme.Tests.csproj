@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
@@ -9,6 +9,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Acme.Application\Acme.Application.csproj" />
     <ProjectReference Include="..\..\src\Acme.Domain\Acme.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Acme.Infrastructure\Acme.Infrastructure.csproj" />
+    <!--
+      The web layer, so the authorisation matrix can reflect over every
+      controller action. No new NuGet package is involved: this is a project
+      reference, and the matrix test needs no host, no HTTP and no database.
+    -->
+    <ProjectReference Include="..\..\src\Acme.WebApi\Acme.WebApi.csproj" />
   </ItemGroup>
 
   <ItemGroup>

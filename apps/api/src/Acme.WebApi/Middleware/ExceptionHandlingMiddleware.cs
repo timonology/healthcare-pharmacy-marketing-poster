@@ -24,6 +24,13 @@ public sealed class ExceptionHandlingMiddleware(
         }
     }
 
+    /// <summary>
+    /// The status a thrown exception becomes. Shared with the audit middleware,
+    /// which sits inside this one and must record what the caller actually got.
+    /// </summary>
+    public static int StatusFor(Exception ex) =>
+        ex is DomainException ? StatusCodes.Status400BadRequest : StatusCodes.Status500InternalServerError;
+
     private static async Task WriteAsync(HttpContext context, int status, string message)
     {
         if (context.Response.HasStarted) return;

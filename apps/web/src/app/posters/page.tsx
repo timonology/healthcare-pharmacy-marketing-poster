@@ -2,15 +2,25 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   POSTER_STATUSES,
+  type CurrentSubscription,
   type PosterStatus,
   type PosterSummary,
 } from "@acme/shared-types";
-import { CanvasPreview } from "@/components/canvas/CanvasPreview";
+import { Copy, FileDown, Repeat, Share2, Sparkles, Trash2 } from "lucide-react";
+import { PublishDialog } from "@/components/social/PublishDialog";
+import { RecurringDialog } from "@/components/social/RecurringDialog";
 import { Badge } from "@/components/ui/badge";
+import { GeneratePosterDialog } from "@/components/posters/GeneratePosterDialog";
+import { PosterCardImage } from "@/components/posters/PosterCardImage";
 import { Button } from "@/components/ui/button";
+import { ActionMenu } from "@/components/ui/action-menu";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   Card,
   CardContent,
@@ -20,6 +30,10 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { NoResultsInRange, SortDateControls } from "@/components/lists/SortDateControls";
+import { useListWindow } from "@/hooks/useListWindow";
+import { hasDateRange, listWindowKey, listWindowParams } from "@/lib/list-window";
+import { usePharmacyTokenValues } from "@/store/token-values-store";
 
 type Filter = "All" | PosterStatus;
 
@@ -31,8 +45,45 @@ export default function MyPostersPage() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [loading, setLoading] = useState(true);
+  const [aiOpen, setAiOpen] = useState(false);
+  // Bumped to re-run the list effect below. The fetch lives inside that effect
+  // because it depends on the filter and the debounced search, and lifting it
+  // out to call from here would mean duplicating both — so the refresh is a
+  // dependency change rather than a second copy of the query.
+  const [reloadKey, setReloadKey] = useState(0);
+  /** Drives the allowance line in the AI dialog. Null until it loads. */
+  const [subscription, setSubscription] = useState<CurrentSubscription | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  /** The poster whose share dialog is open, or null. */
+  const [sharing, setSharing] = useState<PosterSummary | null>(null);
+  /** The poster being made into a recurring post, or null. */
+  const [recurring, setRecurring] = useState<PosterSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { listWindow, setListWindow, ready } = useListWindow();
+  const windowKey = listWindowKey(listWindow);
+
+  /** Every filter back to its default. Sort is a preference and stays. */
+  function clearFilters() {
+    setSearch("");
+    setDebounced("");
+    setFilter("All");
+    setListWindow({ ...listWindow, from: null, to: null });
+  }
+
+  // Loaded once here rather than inside the dialog: the dialog opens on a
+
+  // click, and fetching then would show "Checking your plan…" every time
+
+  // somebody opens it.
+
+  const refreshSubscription = useCallback(async () => {
+
+    setSubscription(await api.getCurrentSubscription().catch(() => null));
+
+  }, []);
+
+  useEffect(() => { void refreshSubscription(); }, [refreshSubscription]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 250);
@@ -40,6 +91,8 @@ export default function MyPostersPage() {
   }, [search]);
 
   useEffect(() => {
+    // Wait for the URL's sort and dates, so a shared link fetches once.
+    if (!ready) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -48,6 +101,7 @@ export default function MyPostersPage() {
         const page = await api.listPosters({
           status: filter === "All" ? undefined : filter,
           search: debounced || undefined,
+          ...listWindowParams(listWindow),
           take: 60,
         });
         if (cancelled) return;
@@ -62,7 +116,9 @@ export default function MyPostersPage() {
     return () => {
       cancelled = true;
     };
-  }, [filter, debounced]);
+    // listWindow is covered by windowKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, debounced, reloadKey, ready, windowKey]);
 
   async function createBlank() {
     try {
@@ -144,7 +200,16 @@ export default function MyPostersPage() {
           <Button asChild variant="outline">
             <Link href="/templates">Browse templates</Link>
           </Button>
-          <Button onClick={createBlank}>New blank poster</Button>
+          <Button variant="outline" onClick={createBlank}>New blank poster</Button>
+          {/* Primary, because it is the one that saves a pharmacist the most
+              work — a blank canvas is the fallback, not the headline. */}
+          <Button
+            onClick={() => setAiOpen(true)}
+            className="bg-brand-gradient text-primary-foreground shadow-md hover:opacity-90"
+          >
+            <Sparkles className="mr-1.5 h-4 w-4" />
+            Design with AI
+          </Button>
         </div>
       </header>
 
@@ -169,6 +234,7 @@ export default function MyPostersPage() {
             </FilterChip>
           ))}
         </div>
+        <SortDateControls value={listWindow} onChange={setListWindow} dateField="Last updated" />
       </div>
 
       {error && (
@@ -180,6 +246,8 @@ export default function MyPostersPage() {
       <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {loading
           ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+          : items.length === 0 && hasDateRange(listWindow)
+          ? <NoResultsInRange onClear={clearFilters} />
           : items.length === 0
           ? (
             <EmptyState onCreate={createBlank} />
@@ -193,69 +261,147 @@ export default function MyPostersPage() {
                   <StatusBadge status={p.status} />
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-1">
                 <p className="text-xs text-muted-foreground">
                   Updated {new Date(p.updatedAtUtc).toLocaleString()}
                 </p>
+                {/* What the status actually means, next to the button that
+                    changes it. Publishing used to move a label and nothing
+                    else; now it decides whether this poster can go to
+                    patients, so the card says so. */}
+                <p className="text-xs text-muted-foreground">
+                  {statusMeaning(p.status)}
+                </p>
               </CardContent>
-              <CardFooter className="flex flex-wrap justify-between gap-2">
+              {/*
+                Three controls, not six.
+                  · Open — what you came here to do.
+                  · The status change — the everyday action, and its label says
+                    which way it goes, so it earns its place on the card.
+                  · Everything else, behind one menu.
+
+                Six buttons did not fit in a column a third of the screen wide.
+                They were in a row that could not wrap, inside a card that
+                clips its contents, so Delete was pushed off the edge and could
+                not be seen or clicked at all.
+              */}
+              <CardFooter className="flex items-center justify-between gap-2">
                 <Button asChild variant="default" size="sm">
                   <Link href={`/posters/${p.id}`}>Open</Link>
                 </Button>
-                <div className="flex gap-1">
-                  <Button asChild size="sm" variant="ghost" title="Download as PDF">
-                    <a href={api.posterPdfUrl(p.id)}>PDF</a>
-                  </Button>
+
+                <div className="flex min-w-0 items-center gap-1">
                   <Button
                     size="sm"
-                    variant="ghost"
-                    onClick={() => duplicate(p.id)}
+                    variant="secondary"
+                    onClick={() => setStatus(p.id, nextStatus(p.status))}
                     disabled={busyId === p.id}
+                    title={statusActionHint(p.status)}
                   >
-                    Duplicate
+                    {statusActionLabel(p.status)}
                   </Button>
-                  {p.status === "Draft" ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => setStatus(p.id, "Published")}
-                      disabled={busyId === p.id}
+
+                  <ActionMenu label={`More actions for ${p.name}`}>
+                    {/*
+                      "Share" rather than "Publish": the status button beside
+                      this already means publish-to-the-gallery, and two
+                      controls with the same word doing different things is how
+                      someone posts a draft to a pharmacy's Facebook page by
+                      accident.
+                    */}
+                    <DropdownMenuItem
+                      disabled={p.status !== "Published"}
+                      onSelect={() => setSharing(p)}
                     >
-                      Publish
-                    </Button>
-                  ) : p.status === "Published" ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => setStatus(p.id, "Archived")}
-                      disabled={busyId === p.id}
+                      <Share2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="min-w-0 flex-1">
+                        <span className="block">Share to social</span>
+                        {/* The reason travels with the disabled control. A
+                            greyed-out item that says nothing is a dead end. */}
+                        {p.status !== "Published" && (
+                          <span className="block text-[11px] text-muted-foreground">
+                            Publish it first
+                          </span>
+                        )}
+                      </span>
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem
+                      disabled={p.status !== "Published"}
+                      onSelect={() => setRecurring(p)}
                     >
-                      Archive
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => setStatus(p.id, "Draft")}
+                      <Repeat className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="min-w-0 flex-1">
+                        <span className="block">Make recurring</span>
+                        {p.status !== "Published" && (
+                          <span className="block text-[11px] text-muted-foreground">
+                            Publish it first
+                          </span>
+                        )}
+                      </span>
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem asChild className="items-center">
+                      <a href={api.posterPdfUrl(p.id)}>
+                        <FileDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                        Download PDF
+                      </a>
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem
+                      className="items-center"
                       disabled={busyId === p.id}
+                      onSelect={() => duplicate(p.id)}
                     >
-                      Restore
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => remove(p.id)}
-                    disabled={busyId === p.id}
-                  >
-                    Delete
-                  </Button>
+                      <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Duplicate
+                    </DropdownMenuItem>
+
+                    {/* Separated, and last. Delete used to sit immediately
+                        beside Duplicate at the same size. */}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="items-center text-destructive focus:bg-destructive/10 focus:text-destructive"
+                      disabled={busyId === p.id}
+                      onSelect={() => remove(p.id)}
+                    >
+                      <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                      Delete poster
+                    </DropdownMenuItem>
+                  </ActionMenu>
                 </div>
               </CardFooter>
             </Card>
           ))}
       </section>
-    </main>
+
+      <PublishDialog
+        open={sharing !== null}
+        onClose={() => setSharing(null)}
+        sourceKind="Poster"
+        sourceId={sharing?.id ?? ""}
+        sourceName={sharing?.name ?? ""}
+        isVideo={false}
+      />
+      <RecurringDialog
+        open={recurring !== null}
+        onClose={() => setRecurring(null)}
+        source={recurring ? { kind: "Poster", id: recurring.id, name: recurring.name, imageUrl: recurring.thumbnailUrl } : null}
+        onSaved={() => router.push("/social?tab=recurring")}
+      />
+      <GeneratePosterDialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        subscription={subscription}
+        onGenerated={async () => {
+          // Both: the new poster changes the list, and the design just
+          // spent consumes an allowance the dialog reports.
+          setReloadKey((k) => k + 1);
+          await refreshSubscription();
+        }}
+      />
+
+      </main>
   );
 }
 
@@ -286,30 +432,56 @@ function FilterChip({
   );
 }
 
+/**
+ * Where the status button takes a poster next, and what it should say.
+ *
+ * Draft → Published → Archived → back to Draft. Spelled out here rather than
+ * as a ternary chain in the card so the label and the action cannot drift
+ * apart — a button reading "Archive" that publishes is worse than no button.
+ */
+function statusMeaning(status: PosterSummary["status"]): string {
+  if (status === "Published") return "Ready to send in campaigns and to social.";
+  if (status === "Draft") return "A work in progress — publish it to send it out.";
+  return "Retired. Restore it to a draft to use it again.";
+}
+
+function nextStatus(status: PosterSummary["status"]): PosterSummary["status"] {
+  if (status === "Draft") return "Published";
+  if (status === "Published") return "Archived";
+  return "Draft";
+}
+
+function statusActionHint(status: PosterSummary["status"]): string {
+  if (status === "Draft") return "Publish this poster so it can be sent in campaigns";
+  if (status === "Published") return "Archive this poster — it can no longer be sent";
+  return "Move this poster back to a draft";
+}
+
+function statusActionLabel(status: PosterSummary["status"]): string {
+  if (status === "Draft") return "Publish";
+  if (status === "Published") return "Archive";
+  return "Restore";
+}
+
 function PosterThumb({ summary }: { summary: PosterSummary }) {
-  if (summary.thumbnailUrl) {
-    return (
-      <div className="aspect-[1/1.414] w-full overflow-hidden bg-muted">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={summary.thumbnailUrl}
-          alt={summary.name}
-          className="h-full w-full object-cover"
-        />
-      </div>
-    );
-  }
+  // A poster made before onboarding still holds {{tokens}}: the fallback
+  // preview draws them with the pharmacy's details, or blank — never braces.
+  // (The rendered card resolves them on the server.)
+  const tokenValues = usePharmacyTokenValues();
   return (
-    <div className="aspect-[1/1.414] w-full overflow-hidden bg-muted">
-      <CanvasPreview doc={summary.canvas} className="h-full w-full" />
-    </div>
+    <PosterCardImage
+      src={summary.thumbnailUrl}
+      alt={summary.name}
+      canvas={summary.canvas}
+      tokenValues={tokenValues}
+    />
   );
 }
 
 function SkeletonCard() {
   return (
     <Card className="overflow-hidden">
-      <div className="aspect-[3/4] w-full animate-pulse bg-muted" />
+      <div className="aspect-[1/1.414] w-full animate-pulse bg-muted" />
       <CardHeader>
         <div className="h-5 w-3/4 animate-pulse rounded bg-muted" />
         <div className="h-4 w-full animate-pulse rounded bg-muted" />

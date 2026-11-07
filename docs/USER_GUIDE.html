@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Marketing25 · Quick Start Guide</title>
+<style>
+  :root {
+    --primary: #0e7490;         /* teal-700 */
+    --primary-dark: #164e63;    /* cyan-900 */
+    --emerald: #10b981;         /* emerald-500 */
+    --ink: #0f172a;             /* slate-900 */
+    --muted: #64748b;           /* slate-500 */
+    --line: #e2e8f0;            /* slate-200 */
+    --bg-soft: #f8fafc;         /* slate-50 */
+    --accent-soft: #ecfeff;     /* cyan-50 */
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    color: var(--ink);
+    background: #f1f5f9;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.4;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    margin: 0 auto;
+    background: #fff;
+    padding: 14mm 12mm 12mm;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    /* Soft brand halo — subtle radial in the top-right corner. */
+    background-image:
+      radial-gradient(circle at 100% 0%, rgba(14, 116, 144, 0.06) 0%, transparent 40%),
+      radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.05) 0%, transparent 35%);
+  }
+
+  /* ---- Header ---- */
+  .header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding-bottom: 4mm;
+    border-bottom: 1.5px solid var(--line);
+    margin-bottom: 5mm;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 3mm;
+  }
+  .brand .pill {
+    width: 12mm;
+    height: 12mm;
+    border-radius: 3mm;
+    display: flex;
+  }
+  .brand .pill svg {
+    width: 12mm;
+    height: 12mm;
+  }
+  .brand .wordmark {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+  }
+  .brand .name {
+    font-size: 14pt;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--primary-dark);
+  }
+  .brand .tag {
+    font-size: 8.5pt;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+  .header-right {
+    text-align: right;
+  }
+  .header-right .title {
+    font-size: 22pt;
+    font-weight: 800;
+    line-height: 1;
+    background: linear-gradient(90deg, var(--primary) 0%, var(--emerald) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: -0.02em;
+  }
+  .header-right .subtitle {
+    font-size: 8.5pt;
+    color: var(--muted);
+    margin-top: 1mm;
+  }
+
+  /* ---- Intro strip ---- */
+  .intro {
+    background: linear-gradient(90deg, var(--accent-soft) 0%, rgba(236, 253, 245, 0.6) 100%);
+    border: 1px solid rgba(14, 116, 144, 0.15);
+    border-radius: 3mm;
+    padding: 3mm 4mm;
+    margin-bottom: 5mm;
+    display: flex;
+    gap: 4mm;
+    align-items: center;
+  }
+  .intro .icon {
+    width: 8mm;
+    height: 8mm;
+    border-radius: 50%;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(14, 116, 144, 0.15);
+  }
+  .intro .icon svg { width: 5mm; height: 5mm; color: var(--primary); }
+  .intro-text {
+    font-size: 9pt;
+    color: var(--ink);
+    line-height: 1.4;
+  }
+  .intro-text strong { color: var(--primary-dark); }
+
+  /* ---- Bullet grid ---- */
+  .bullets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3mm 6mm;
+    flex: 1;
+  }
+  .bullet {
+    display: flex;
+    gap: 3mm;
+    align-items: flex-start;
+  }
+  .bullet .num {
+    width: 7mm;
+    height: 7mm;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--emerald) 100%);
+    color: #fff;
+    font-weight: 700;
+    font-size: 8.5pt;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 5px rgba(14, 116, 144, 0.25);
+  }
+  .bullet .body {
+    flex: 1;
+    font-size: 8.6pt;
+    line-height: 1.35;
+  }
+  /*
+    The step's heading — the first <strong> in the body, and only that one.
+
+    This used to be `.bullet .body strong`, which caught every <strong> in the
+    guide. Steps 2, 8, 15, 16, 17 and 18 emphasise a word mid-sentence ("Pick a
+    published poster"), and a block-level <strong> breaks the sentence onto
+    three lines with the emphasised word alone in the middle. The PDF never
+    showed it, because that build parses the tags out and lays the text out
+    itself — so the browser copy was the broken one, and it is the copy a
+    pharmacy is most likely to open.
+  */
+  .bullet .body > strong:first-child {
+    color: var(--primary-dark);
+    font-weight: 700;
+    display: block;
+    margin-bottom: 0.3mm;
+    font-size: 9pt;
+  }
+  /* Emphasis inside the sentence stays inline. */
+  .bullet .body strong {
+    color: var(--primary-dark);
+    font-weight: 700;
+  }
+
+  /* Section divider labels between rows of 4 */
+  .section-label {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 3mm;
+    margin: 1mm 0 0.5mm;
+  }
+  .section-label .dot {
+    width: 5mm;
+    height: 5mm;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--primary);
+  }
+  .section-label .dot svg {
+    width: 3mm;
+    height: 3mm;
+    color: var(--primary);
+  }
+  .section-label .label {
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--primary);
+  }
+  .section-label .rule {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--primary) 0%, transparent 100%);
+    opacity: 0.3;
+  }
+
+  /* ---- Footer ---- */
+  .footer {
+    margin-top: 4mm;
+    padding-top: 3mm;
+    border-top: 1.5px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 7.8pt;
+    color: var(--muted);
+  }
+  .footer .support {
+    display: flex;
+    gap: 4mm;
+    align-items: center;
+  }
+  .footer .support strong {
+    color: var(--primary-dark);
+    font-weight: 700;
+  }
+  .footer .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 1.5mm;
+    padding: 1mm 2.5mm;
+    background: var(--accent-soft);
+    color: var(--primary);
+    border-radius: 2mm;
+    font-weight: 600;
+    font-size: 7.5pt;
+  }
+
+  @media print {
+    html, body { background: #fff; }
+    .page { box-shadow: none; margin: 0; }
+  }
+  @media screen {
+    body { padding: 20px 0; }
+    .page {
+      box-shadow: 0 10px 40px rgba(15, 23, 42, 0.12);
+      border-radius: 4px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="brand">
+      <div class="pill">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <rect width="64" height="64" rx="16" fill="#11798A"/>
+          <path d="M26 14H34V22L49 32L34 42V50H26V36H14V28H26Z" fill="#fff" stroke="#fff" stroke-width="4" stroke-linejoin="round"/>
+          <circle cx="51" cy="13" r="4" fill="#7FE3D6"/>
+        </svg>
+      </div>
+      <div class="wordmark">
+        <span class="name">Marketing25</span>
+        <span class="tag">Community pharmacy marketing, made simple.</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="title">Quick Start Guide</div>
+      <div class="subtitle">Go from sign-up to sent campaign in under an hour</div>
+    </div>
+  </div>
+
+  <!-- INTRO -->
+  <div class="intro">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="m9 12 2 2 4-4"/>
+      </svg>
+    </div>
+    <div class="intro-text">
+      <strong>Welcome.</strong>
+      This one-pager walks you through the 24 things every pharmacy team should know
+      on day one — from setting up your brand kit to sending your first campaign
+      and putting posters on a screen in the shop.
+    </div>
+  </div>
+
+  <!-- BULLETS -->
+  <div class="bullets">
+
+    <!-- Section 1: Get started -->
+    <div class="section-label">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="5 12 10 17 20 7"/>
+        </svg>
+      </div>
+      <span class="label">Get started</span>
+      <div class="rule"></div>
+    </div>
+
+    <div class="bullet">
+      <div class="num">1</div>
+      <div class="body">
+        <strong>Create your account</strong>
+        Sign up with email + password. No credit card needed for the Free plan.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">2</div>
+      <div class="body">
+        <strong>Complete onboarding</strong>
+        Three quick steps — pharmacy details, contact, plan. Or <strong>Skip for
+        now</strong> and finish later.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">3</div>
+      <div class="body">
+        <strong>Set up your brand kit</strong>
+        Logo, colours and footer — set once, applied everywhere.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">4</div>
+      <div class="body">
+        <strong>Explore templates</strong>
+        24 designs: flu, vitamin D, hand hygiene, allergies and more.
+      </div>
+    </div>
+
+    <!-- Section 2: Design posters -->
+    <div class="section-label">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="3" width="16" height="18" rx="2"/>
+          <path d="M8 7h8M8 11h8M8 15h5"/>
+        </svg>
+      </div>
+      <span class="label">Design posters</span>
+      <div class="rule"></div>
+    </div>
+
+    <div class="bullet">
+      <div class="num">5</div>
+      <div class="body">
+        <strong>Use a template</strong>
+        Click <em>Use template</em> to open the drag-and-drop editor with your brand pre-applied.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">6</div>
+      <div class="body">
+        <strong>Customise on canvas</strong>
+        Edit text, resize shapes, swap images. Auto-saves as you go; press
+        <strong>Done</strong> when finished.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">7</div>
+      <div class="body">
+        <strong>Apply pharmacy info</strong>
+        One click inserts your name, address and phone into template placeholders.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">8</div>
+      <div class="body">
+        <strong>Publish it</strong>
+        <strong>Draft</strong> while you work; <strong>Publish</strong> when ready —
+        only then can it be sent. PDF via the ⋯ menu.
+      </div>
+    </div>
+
+    <!-- Section 3: Generate videos -->
+    <div class="section-label">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="6 4 20 12 6 20 6 4"/>
+        </svg>
+      </div>
+      <span class="label">Generate marketing videos</span>
+      <div class="rule"></div>
+    </div>
+
+    <div class="bullet">
+      <div class="num">9</div>
+      <div class="body">
+        <strong>Type a topic, add your photos</strong>
+        e.g. "Why book your flu jab this autumn". Attach up to four of your own photos and drag or zoom each to frame it.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">10</div>
+      <div class="body">
+        <strong>Choose your voice</strong>
+        Five free voices or premium ElevenLabs voices on Pro. Preview cost before you generate.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">11</div>
+      <div class="body">
+        <strong>Wait about two minutes</strong>
+        Research, script, voice and edit — a 15-second 9:16 clip.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">12</div>
+      <div class="body">
+        <strong>Change a shot, free</strong>
+        Ask for a change, tap the shot, say what it should show. Then download for Reels, TikTok, Shorts or a campaign.
+      </div>
+    </div>
+
+    <!-- Section 4: Send campaigns -->
+    <div class="section-label">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m22 2-7 20-4-9-9-4Z"/>
+          <path d="M22 2 11 13"/>
+        </svg>
+      </div>
+      <span class="label">Send campaigns</span>
+      <div class="rule"></div>
+    </div>
+
+    <div class="bullet">
+      <div class="num">13</div>
+      <div class="body">
+        <strong>Add your patients</strong>
+        Add them by hand or import a spreadsheet. Both optional.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">14</div>
+      <div class="body">
+        <strong>Group your audience</strong>
+        Group by condition or demographic for targeted sends.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">15</div>
+      <div class="body">
+        <strong>Build a campaign</strong>
+        Pick a <strong>published</strong> poster, attach up to 5 videos, choose
+        patients and groups, name it.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">16</div>
+      <div class="body">
+        <strong>One-click send</strong>
+        The poster is in the email <strong>itself</strong> — video links live 48 hours.
+      </div>
+    </div>
+
+    <!-- Section 5: Screens in the shop -->
+    <div class="section-label">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8"/>
+          <path d="M12 17v4"/>
+        </svg>
+      </div>
+      <span class="label">Screens in the shop</span>
+      <div class="rule"></div>
+    </div>
+
+    <div class="bullet">
+      <div class="num">17</div>
+      <div class="body">
+        <strong>Build a playlist</strong>
+        Order <strong>published</strong> posters and set seconds on each.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">18</div>
+      <div class="body">
+        <strong>Pair the screen once</strong>
+        Open <strong>/display</strong> on the TV and type the six-character code.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">19</div>
+      <div class="body">
+        <strong>Change it from your desk</strong>
+        Edit the playlist and save. Screens follow within 30 seconds.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">20</div>
+      <div class="body">
+        <strong>Turn off the TV's sleep timer</strong>
+        The step people forget. Starter gets 1 screen, Pro unlimited.
+      </div>
+    </div>
+
+    <!-- Section 6: Track & scale -->
+    <div class="section-label">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/>
+          <path d="m7 15 4-4 4 4 6-8"/>
+        </svg>
+      </div>
+      <span class="label">Share, track &amp; scale</span>
+      <div class="rule"></div>
+    </div>
+
+    <div class="bullet">
+      <div class="num">21</div>
+      <div class="body">
+        <strong>Post to social, on repeat</strong>
+        Facebook, Instagram, LinkedIn, YouTube and TikTok — once or on repeat. Starter and Pro.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">22</div>
+      <div class="body">
+        <strong>Analytics dashboard</strong>
+        Open and click rates, top posters and videos. Pro plan.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">23</div>
+      <div class="body">
+        <strong>Watch monthly usage</strong>
+        Counters for posters, videos and recipients used this month.
+      </div>
+    </div>
+    <div class="bullet">
+      <div class="num">24</div>
+      <div class="body">
+        <strong>Upgrade any time</strong>
+        Free → Starter £7 → Pro £25 a month. No watermark.
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="support">
+      <span>Need help?  <strong>support@marketing25.co.uk</strong></span>
+      <span class="badge">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2 2 7l10 5 10-5-10-5Z"/>
+          <path d="m2 17 10 5 10-5"/>
+          <path d="m2 12 10 5 10-5"/>
+        </svg>
+        marketing25.co.uk
+      </span>
+    </div>
+    <div>© Sonar Informatics · v1.0</div>
+  </div>
+
+</div>
+</body>
+</html>

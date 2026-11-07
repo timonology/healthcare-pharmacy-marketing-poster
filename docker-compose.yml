@@ -8,24 +8,44 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: example
       MONGO_INITDB_DATABASE: acme
     ports:
-      - "27017:27017"
+      # Bound to this machine only (security review SEC-16): no auth on the
+      # local database, so it must not answer anyone else on the network.
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      # 10s, not 5s. Each probe starts mongosh — a Node.js process — and while
+      # Docker is busy (a long image build, ffmpeg in the ai-service) that alone
+      # can take over 5 seconds. Five slow probes in a row marked a perfectly
+      # healthy mongod "unhealthy" mid-build on 5 October, and compose then
+      # refused to start the container that had just been built.
+      timeout: 10s
+      retries: 6
+      # Probes before this point do not count against `retries`.
+      #
+      # Without it mongod has 50 seconds — 5 retries at 10s — to accept its
+      # first connection, and that window includes WiredTiger recovery. On a
+      # laptop where Docker is competing for CPU that is not always enough, and
+      # the failure is confusing rather than obvious: the container is running
+      # and mongod is fine, but `depends_on: condition: service_healthy` has
+      # already given up, so the API never starts and the message blames the
+      # database.
+      start_period: 40s
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
     container_name: acme-azurite
     restart: unless-stopped
-    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0"
+    # --skipApiVersionCheck: the azure-storage-blob Python SDK sends
+    # newer x-ms-version headers than the pinned Azurite image can
+    # validate. This flag makes Azurite accept any version.
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck"
     ports:
-      - "10000:10000"   # Blob
-      - "10001:10001"   # Queue
-      - "10002:10002"   # Table
+      - "127.0.0.1:10000:10000"   # Blob
+      - "127.0.0.1:10001:10001"   # Queue
+      - "127.0.0.1:10002:10002"   # Table
     volumes:
       - azurite-data:/data
 
@@ -44,30 +64,187 @@ services:
       Mongo__ConnectionString: mongodb://root:example@mongo:27017/acme?authSource=admin
       Mongo__Database: acme
       Jwt__Secret: ${JWT_SECRET}
+      Edge__ClientIpKey: ${CLIENT_IP_SIGNING_KEY:-}
+      # GET /api/health/ready (pnpm smoke). Unset: the endpoint is 404.
+      Readiness__Token: ${READINESS_TOKEN:-}
+      Signing__LinkSecret: ${LINK_SIGNING_SECRET:-}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: ${JWT_AUDIENCE}
       Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES}
       AzureBlob__ConnectionString: ${AZURE_BLOB_CONNECTION_STRING}
       AzureBlob__Container: ${AZURE_BLOB_CONTAINER}
+      # ─── Rate limits (security review SEC-05) ─────────────────
+      # Production keeps the shipped per-address limits. Locally every request
+      # comes from one address, and the browser suite signs in dozens of times
+      # a minute, so the per-address ones are raised here. The per-account
+      # sign-in lock (8 wrong passwords) still applies.
+      RateLimits__AuthPerMinute: ${RATE_LIMIT_AUTH_PER_MINUTE:-600}
+      RateLimits__AccountEmailPer15Minutes: ${RATE_LIMIT_ACCOUNT_EMAIL:-200}
+      RateLimits__DisplayClaimPerMinute: ${RATE_LIMIT_DISPLAY_CLAIM:-200}
+      # ─── AI service ────────────────────────────────────────────
+      # Synchronous HTTP, used only for admin poster-template generation.
+      # Video rendering is dispatched through Mongo, not over HTTP.
+      AiService__BaseUrl: http://ai-service:8000
+      AiService__TimeoutSeconds: 210
+      # ─── Bootstrap SuperAdmin ──────────────────────────────────
+      # Creates the first admin account on an empty database. Idempotent:
+      # skipped once any SuperAdmin exists. Never resets an existing password.
+      SuperAdmin__Enabled: ${SUPERADMIN_ENABLED:-true}
+      SuperAdmin__Email: ${SUPERADMIN_EMAIL:-superadmin@sonar.local}
+      SuperAdmin__Password: ${SUPERADMIN_PASSWORD:-ChangeMe-Dev-Only-123}
+      SuperAdmin__DisplayName: ${SUPERADMIN_NAME:-Super Admin}
+      # ─── Smoke test account ────────────────────────────────────
+      # The account `pnpm smoke` signs in as: an ordinary pharmacy user on a
+      # paid plan, so the plan-gated doors are actually exercised and nothing
+      # the smoke creates lands on the SuperAdmin.
+      #
+      # SMOKE_EMAIL and SMOKE_PASSWORD are the SAME pair the runner reads from
+      # .env. One credential, one place — the API seeds it and the smoke signs
+      # in with it, so they cannot drift apart.
+      SmokeAccount__Enabled: ${SMOKE_ACCOUNT_ENABLED:-true}
+      SmokeAccount__Email: ${SMOKE_EMAIL:-smoke@sonar.local}
+      SmokeAccount__Password: ${SMOKE_PASSWORD:-Smoke-Dev-Only-123!}
+      SmokeAccount__PharmacyName: ${SMOKE_PHARMACY_NAME:-Smoke Test Pharmacy}
+      SmokeAccount__Tier: ${SMOKE_ACCOUNT_TIER:-Pro}
+      # ─── Social publishing & Google Ads ────────────────────────
+      # Credentials come from the repo-root .env, which is gitignored.
+      # Never put these in appsettings.Development.json — that file is
+      # committed, and an app secret in git is a rotation job, not a typo.
+      #
+      # SOCIAL_ENCRYPTION_KEY protects stored platform tokens. Generate with:
+      #   openssl rand -base64 32
+      # Lose it and every pharmacy has to reconnect their accounts.
+      Social__Encryption__ActiveVersion: "1"
+      Social__Encryption__Keys__0__Version: "1"
+      Social__Encryption__Keys__0__Key: ${SOCIAL_ENCRYPTION_KEY:-}
+      Social__Meta__AppId: ${META_APP_ID:-}
+      Social__Meta__AppSecret: ${META_APP_SECRET:-}
+      Social__Meta__GraphVersion: ${META_GRAPH_VERSION:-v26.0}
+      Social__Google__ClientId: ${GOOGLE_CLIENT_ID:-}
+      Social__Google__ClientSecret: ${GOOGLE_CLIENT_SECRET:-}
+      # Legacy: Google sunset developer tokens (10 Sep 2026). Leave blank.
+      Social__Google__AdsDeveloperToken: ${GOOGLE_ADS_DEVELOPER_TOKEN:-}
+      Social__Google__AdsApiVersion: ${GOOGLE_ADS_API_VERSION:-v25}
+      # true: Google checks every campaign creation and creates nothing.
+      # Start here against a new account.
+      Social__Google__AdsValidateOnly: ${GOOGLE_ADS_VALIDATE_ONLY:-false}
+      Social__LinkedIn__ClientId: ${LINKEDIN_CLIENT_ID:-}
+      Social__LinkedIn__ClientSecret: ${LINKEDIN_CLIENT_SECRET:-}
+      # true only once LinkedIn has approved the app for Community Management.
+      Social__LinkedIn__PagesEnabled: ${LINKEDIN_PAGES_ENABLED:-false}
+      Social__TikTok__ClientKey: ${TIKTOK_CLIENT_KEY:-}
+      Social__TikTok__ClientSecret: ${TIKTOK_CLIENT_SECRET:-}
+      Social__X__ClientId: ${X_CLIENT_ID:-}
+      Social__X__ClientSecret: ${X_CLIENT_SECRET:-}
+      Social__Worker__Enabled: ${SOCIAL_WORKER_ENABLED:-true}
+      # ─── Stripe ────────────────────────────────────────────────
+      # Leave STRIPE_ENABLED=false to run without billing: checkout
+      # endpoints return a clear error and /api/subscription/upgrade
+      # keeps working as the local tier switch.
+      Stripe__Enabled: ${STRIPE_ENABLED:-false}
+      Stripe__SecretKey: ${STRIPE_SECRET_KEY:-}
+      Stripe__WebhookSecret: ${STRIPE_WEBHOOK_SECRET:-}
+      Stripe__Prices__StarterMonthly: ${STRIPE_PRICE_STARTER_MONTHLY:-}
+      Stripe__Prices__StarterYearly: ${STRIPE_PRICE_STARTER_YEARLY:-}
+      Stripe__Prices__ProMonthly: ${STRIPE_PRICE_PRO_MONTHLY:-}
+      Stripe__Prices__ProYearly: ${STRIPE_PRICE_PRO_YEARLY:-}
+      Stripe__CreditPacks__0__Key: credits_10
+      Stripe__CreditPacks__0__PriceId: ${STRIPE_PRICE_CREDITS_10:-}
+      Stripe__CreditPacks__0__Credits: "10"
+      Stripe__CreditPacks__0__DisplayName: 10 video credits
+      Stripe__CreditPacks__0__PriceGbp: "9"
+      Stripe__CreditPacks__1__Key: credits_25
+      Stripe__CreditPacks__1__PriceId: ${STRIPE_PRICE_CREDITS_25:-}
+      Stripe__CreditPacks__1__Credits: "25"
+      Stripe__CreditPacks__1__DisplayName: 25 video credits
+      Stripe__CreditPacks__1__PriceGbp: "20"
+      Stripe__CreditPacks__2__Key: credits_50
+      Stripe__CreditPacks__2__PriceId: ${STRIPE_PRICE_CREDITS_50:-}
+      Stripe__CreditPacks__2__Credits: "50"
+      Stripe__CreditPacks__2__DisplayName: 50 video credits
+      Stripe__CreditPacks__2__PriceGbp: "35"
+      Stripe__SuccessUrl: http://localhost:${WEB_HOST_PORT:-9090}/billing/success
+      Stripe__CancelUrl: http://localhost:${WEB_HOST_PORT:-9090}/pricing
+      Stripe__PortalReturnUrl: http://localhost:${WEB_HOST_PORT:-9090}/profile
+      # Where the web app is reached. Links in emails use it, and the API
+      # builds the social OAuth redirect from it — so it must be the address
+      # in the browser, or Connect is refused (register
+      # http://localhost:9090/social/callback/meta with Meta for local use).
+      Public__WebBaseUrl: http://localhost:${WEB_HOST_PORT:-9090}
     ports:
-      - "${API_HOST_PORT:-5050}:8080"
+      # BIND_ADDR=0.0.0.0 to reach the stack from another device (a TV, a
+      # phone); the default keeps it to this machine (SEC-16).
+      - "${BIND_ADDR:-127.0.0.1}:${API_HOST_PORT:-5050}:8080"
 
   ai-service:
     build:
       context: ./apps/ai-service
       dockerfile: Dockerfile
+      args:
+        # Empty locally, and that is fine: app/main.py falls back to its own
+        # file mtime, which still changes when the code does. Set it when you
+        # want the boot line to say something specific:
+        #   BUILD_ID=$(git rev-parse --short HEAD) docker compose up -d --build ai-service
+        BUILD_ID: ${BUILD_ID:-}
     container_name: acme-ai
     restart: unless-stopped
+    # Explicit upstream resolvers.
+    #
+    # This container is the only one that talks to the public internet
+    # (Pexels, Anthropic, Replicate), and Docker Desktop's embedded DNS
+    # forwards to whatever the host is using — which on a laptop changes with
+    # every network switch, VPN and sleep/wake. The symptom is nasty because
+    # it's partial: api.pexels.com resolves from cache while a first-time
+    # lookup of images.pexels.com fails in the same request.
+    #
+    # Container-to-container names (mongo, azurite) are unaffected — Docker's
+    # embedded resolver still answers those and only forwards external queries
+    # to the servers listed here.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    depends_on:
+      mongo:
+        condition: service_healthy
     environment:
+      # Local stack: show /docs and /redoc. Production leaves it unset.
+      APP_ENV: development
       JWT_SECRET: ${JWT_SECRET}
+      READINESS_TOKEN: ${READINESS_TOKEN:-}
       JWT_ISSUER: ${JWT_ISSUER}
       JWT_AUDIENCE: ${JWT_AUDIENCE}
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
       AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT}
+      # ─── Video agent ───────────────────────────────────────────
+      # Same Mongo + Blob as the .NET API — the worker mutates the
+      # same `videos` collection Pending → Rendering → Ready.
+      Mongo__ConnectionString: mongodb://root:example@mongo:27017/acme?authSource=admin
+      Mongo__Database: acme
+      AzureBlob__ConnectionString: ${AZURE_BLOB_CONNECTION_STRING}
+      AzureBlob__Container: ${AZURE_BLOB_CONTAINER}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      # Poster template design uses a stronger model than the video
+      # scriptwriter — see Settings.template_design_model.
+      TEMPLATE_DESIGN_MODEL: ${TEMPLATE_DESIGN_MODEL:-claude-sonnet-5}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+      PEXELS_API_KEY: ${PEXELS_API_KEY}
+      # Set this and ElevenLabs narrates every video — there is no fallback to
+      # Edge-TTS once it is set. Edge-TTS is not served to datacentre networks,
+      # so on Railway/Azure it fails every render at the voice stage.
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
+      # Optional. Unset, the first voice on the account is used and logged.
+      ELEVENLABS_DEFAULT_VOICE_ID: ${ELEVENLABS_DEFAULT_VOICE_ID:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN}
+      REPLICATE_FLUX_MODEL: ${REPLICATE_FLUX_MODEL:-black-forest-labs/flux-schnell}
+      VIDEO_WORKER_ENABLED: "true"
+      VIDEO_WORKER_POLL_SECONDS: "4"
+    volumes:
+      - ai-media:/app/media
     ports:
-      - "${AI_HOST_PORT:-8000}:8000"
+      - "${BIND_ADDR:-127.0.0.1}:${AI_HOST_PORT:-8000}:8000"
 
   web:
     # Build from repo root so the image can pull in packages/shared-types.
@@ -85,9 +262,15 @@ services:
       # Container-to-container URLs (used by the Next BFF route handlers).
       API_INTERNAL_URL: http://api:8080
       AI_INTERNAL_URL: http://ai-service:8000
+      CLIENT_IP_SIGNING_KEY: ${CLIENT_IP_SIGNING_KEY:-}
+      # Public address for canonical links, sitemap.xml and link previews.
+      SITE_URL: ${SITE_URL:-http://localhost:9090}
+      # Content-Security-Policy: report-only | enforce | off (lib/csp.ts).
+      CSP_MODE: ${CSP_MODE:-report-only}
     ports:
-      - "${WEB_HOST_PORT:-9090}:3000"
+      - "${BIND_ADDR:-127.0.0.1}:${WEB_HOST_PORT:-9090}:3000"
 
 volumes:
   mongo-data:
   azurite-data:
+  ai-media:

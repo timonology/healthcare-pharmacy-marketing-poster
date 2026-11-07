@@ -3,6 +3,7 @@ using Acme.Application.Templates;
 using Acme.Domain.Templates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Acme.WebApi.Auditing;
 
 namespace Acme.WebApi.Controllers;
 
@@ -11,6 +12,13 @@ namespace Acme.WebApi.Controllers;
 [Authorize]
 public sealed class TemplatesController(TemplateService service) : ControllerBase
 {
+    /// <summary>
+    /// Request ceiling for a canvas save. Above the service's own limit
+    /// (CanvasLimitsOptions), so a pharmacist normally gets its plain message;
+    /// this only stops a body large enough to be abuse from being read at all.
+    /// </summary>
+    private const long CanvasBodyLimit = 8 * 1024 * 1024;
+
     /// <summary>List published templates with optional category / search filtering.</summary>
     /// <remarks>Anonymous — the landing page and guest browse use this endpoint.</remarks>
     [HttpGet]
@@ -19,17 +27,27 @@ public sealed class TemplatesController(TemplateService service) : ControllerBas
     public async Task<IActionResult> List(
         [FromQuery] TemplateCategory? category,
         [FromQuery] string? search,
+        [FromQuery] string? sort,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
         [FromQuery] int skip = 0,
         [FromQuery] int take = 50,
         CancellationToken ct = default)
     {
-        var query = new TemplateQuery(category, search, IsPublished: true, skip, Math.Min(take, 100));
+        // Anonymous input: a negative skip or take must be a short page, not a 500.
+        skip = Math.Max(0, skip);
+        take = Math.Clamp(take, 1, 100);
+        // Created date. The house set still leads; sort and range apply within
+        // it and within everything after it.
+        var query = new TemplateQuery(category, search, IsPublished: true, skip, take,
+            Window: ListWindow.From(sort, from, to));
         var items = await service.ListAsync(query, ct);
         var total = await service.CountAsync(query, ct);
         return Ok(new PagedResponse<TemplateSummaryDto>(items, total, skip, take));
     }
 
     /// <summary>Anonymous — used by the public template detail page.</summary>
+    [ActivityLog("template.view", "template")]
     [HttpGet("{id}")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(TemplateDto), StatusCodes.Status200OK)]
@@ -45,13 +63,20 @@ public sealed class TemplatesController(TemplateService service) : ControllerBas
         };
     }
 
-    /// <summary>
-    /// Create a template. In production this should be admin-only — gate with
-    /// a role/policy check before exposing publicly.
-    /// </summary>
+    /// <summary>Create a template. Staff only.</summary>
+    /// <remarks>
+    /// Templates are shared platform-wide: every pharmacy sees the same gallery.
+    /// Before this policy existed the class-level [Authorize] was the only gate,
+    /// so any signed-in pharmacy user could create, rewrite or delete the
+    /// designs every other customer depends on.
+    /// </remarks>
+    [Audit("admin.template.create", "template")]
     [HttpPost]
+    [RequestSizeLimit(CanvasBodyLimit)] // R2-12: a clear refusal comes from the service below this
+    [Authorize(Policy = AuthPolicies.AdminArea)]
     [ProducesResponseType(typeof(TemplateDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Create(
         [FromBody] UpsertTemplateRequest request,
         CancellationToken ct)
@@ -65,9 +90,14 @@ public sealed class TemplatesController(TemplateService service) : ControllerBas
         };
     }
 
+    /// <summary>Update a template. Staff only — see <see cref="Create"/>.</summary>
+    [Audit("admin.template.update", "template")]
     [HttpPut("{id}")]
+    [RequestSizeLimit(CanvasBodyLimit)] // R2-12: a clear refusal comes from the service below this
+    [Authorize(Policy = AuthPolicies.AdminArea)]
     [ProducesResponseType(typeof(TemplateDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Update(
         string id,
         [FromBody] UpsertTemplateRequest request,
@@ -83,9 +113,13 @@ public sealed class TemplatesController(TemplateService service) : ControllerBas
         };
     }
 
+    /// <summary>Delete a template. Staff only — see <see cref="Create"/>.</summary>
+    [Audit("admin.template.delete", "template")]
     [HttpDelete("{id}")]
+    [Authorize(Policy = AuthPolicies.AdminArea)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
         var result = await service.DeleteAsync(id, ct);

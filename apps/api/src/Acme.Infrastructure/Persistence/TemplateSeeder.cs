@@ -1,31 +1,222 @@
+using Acme.Application.Audit;
 using Acme.Application.Templates;
 using Acme.Domain.Templates;
+using Acme.Infrastructure.Storage;
+using Microsoft.Extensions.Logging;
 
 namespace Acme.Infrastructure.Persistence;
 
-public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
+public sealed partial class TemplateSeeder(
+    ITemplateRepository repo,
+    IBlobStorageService blobs,
+    IAuditLogger audit,
+    ILogger<TemplateSeeder> logger) : ITemplateSeeder
 {
+    // Captured as fields so TemplateSeeder.House.cs, the other half of this
+    // partial class, uses them without depending on primary-constructor
+    // parameters being visible across partial declarations.
+    private readonly IBlobStorageService _blobs = blobs;
+    private readonly ILogger<TemplateSeeder> _logger = logger;
+
+    /// <summary>
+    /// Insert any built-in template that isn't in the database yet.
+    /// </summary>
+    /// <remarks>
+    /// Insert-only, deliberately. This used to upsert, which meant the code was
+    /// the source of truth and the database was a cache: an admin could edit a
+    /// built-in template, see the change persist, and then watch it silently
+    /// revert on the next deploy or container restart.
+    ///
+    /// Now the database owns templates once they exist. The seeder's job is to
+    /// populate a fresh environment, not to police an existing one — so adding
+    /// a new template to <see cref="DefaultTemplates"/> still ships it, but
+    /// editing an existing one in code will NOT reach an environment that has
+    /// already seeded it. Change those through the admin UI, or delete the row
+    /// first if you really want the code version back.
+    /// </remarks>
     public async Task SeedIfEmptyAsync(CancellationToken ct)
     {
         foreach (var t in DefaultTemplates())
         {
             var existing = await repo.FindByIdAsync(t.Id, ct);
-            if (existing is null)
-                await repo.AddAsync(t, ct);
-            else
-                await repo.UpdateAsync(t, ct);
+            if (existing is not null) continue;
+
+            // A template whose photographs are not in storage yet is held back,
+            // not inserted with holes in it — see HouseTemplates.
+            if (!await EnsureAssetsAsync(t.Id, ct)) continue;
+
+            await repo.AddAsync(t, ct);
+            await audit.RecordAsync(
+                AuditEvent.Create(AuditActor.System("template-seeder"), "system.seed.template",
+                    "template", t.Id, AuditResults.Ok),
+                ct);
         }
     }
 
+    /* ------------------------------------------------------------------ *
+     * Release dates
+     *
+     * The seeder reconstructs every template on each startup, so their
+     * CreatedAtUtc would otherwise be "whenever the process last booted" —
+     * identical across all of them, leaving the gallery's newest-first order
+     * to fall out of yield order rather than anything meaningful.
+     *
+     * Fixed dates make the ordering deterministic and survive restarts. Bump
+     * a batch date when you add a set you want at the top.
+     * ------------------------------------------------------------------ */
+    private static readonly DateTime OriginalSetDate =
+        new(2026, 1, 15, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime ModernSetDate =
+        new(2026, 7, 29, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime PhotographicSetDate =
+        new(2026, 7, 30, 0, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>
+    /// The built-in templates, for tests that assert properties of what ships.
+    /// </summary>
+    /// <remarks>
+    /// Exposed rather than making <see cref="DefaultTemplates"/> public, so the
+    /// only supported way to get these outside the seeder is one that says in
+    /// its name that it is for tests. They shipped with invented phone numbers
+    /// and addresses once; <c>TemplateContactDetailsTests</c> is what stops that
+    /// happening again, and it needs to read them.
+    /// </remarks>
+    public static IEnumerable<Template> DefaultTemplatesForTesting() => DefaultTemplates();
+
     private static IEnumerable<Template> DefaultTemplates()
     {
+        // ---- House-style set (newest) ----
+        // Generated designs with baked photographs; see TemplateSeeder.House.cs.
+        foreach (var house in HouseTemplates())
+            yield return house;
+
+        // ---- Photographic set ----
+        // Tagged "photo" as well as "modern" so the gallery can offer
+        // "with photography" as a filter — some pharmacies want imagery,
+        // others want fully recolourable vector-only designs.
+
+        yield return Template.CreateWithId(
+            "sys-vaccination-clinic",
+            "Vaccination Clinic Open",
+            "Full-bleed photo with a dark scrim and a white schedule panel. For advertising clinic hours.",
+            TemplateCategory.Vaccination,
+            new[] { "modern", "photo", "vaccination", "clinic", "opening hours" },
+            VaccinationClinicCanvas(),
+            createdAtUtc: PhotographicSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-ask-pharmacist",
+            "Ask Your Pharmacist",
+            "Full-page duotone photograph with oversized type. Bold window or wall poster.",
+            TemplateCategory.General,
+            new[] { "modern", "photo", "duotone", "advice", "consultation" },
+            AskPharmacistCanvas(),
+            createdAtUtc: PhotographicSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-diabetes-screening",
+            "Diabetes Risk Check",
+            "Split layout with a tinted photo panel and eligibility pills.",
+            TemplateCategory.Awareness,
+            new[] { "modern", "photo", "diabetes", "screening", "risk check" },
+            DiabetesScreeningCanvas(),
+            createdAtUtc: PhotographicSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-child-health",
+            "Child Health Clinic",
+            "Soft, reassuring layout with a framed photo card. Aimed at parents and carers.",
+            TemplateCategory.General,
+            new[] { "modern", "photo", "children", "parents", "advice" },
+            ChildHealthClinicCanvas(),
+            createdAtUtc: PhotographicSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-mens-health",
+            "Men's Health MOT",
+            "High-contrast dark editorial with a numbered checklist and a photo footer band.",
+            TemplateCategory.Awareness,
+            new[] { "modern", "photo", "mens health", "screening", "health check" },
+            MensHealthCanvas(),
+            createdAtUtc: PhotographicSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-inhaler-review",
+            "Inhaler Technique Review",
+            "Duotone header with a statistic-led headline and a three-step explainer.",
+            TemplateCategory.Awareness,
+            new[] { "modern", "photo", "asthma", "inhaler", "respiratory" },
+            AsthmaReviewCanvas(),
+            createdAtUtc: PhotographicSetDate);
+
+        // ---- Modern set ----
+        // Tagged "modern" so the templates gallery can surface them together
+        // and so a future filter has something stable to key on.
+
+        yield return Template.CreateWithId(
+            "sys-blood-pressure",
+            "Blood Pressure Check",
+            "Bold diagonal layout with a target-reading badge. For promoting free in-store BP checks.",
+            TemplateCategory.Awareness,
+            new[] { "modern", "blood pressure", "heart", "screening", "free" },
+            BloodPressureCanvas(),
+            createdAtUtc: ModernSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-winter-wellness",
+            "Winter Wellness Offer",
+            "Dark editorial poster with a discount badge and a four-card service grid.",
+            TemplateCategory.Seasonal,
+            new[] { "modern", "winter", "offer", "promotion", "flu" },
+            WinterWellnessCanvas(),
+            createdAtUtc: ModernSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-pharmacy-first",
+            "Pharmacy First Services",
+            "Clean condition list on pill rows. For advertising treat-and-assess services.",
+            TemplateCategory.General,
+            new[] { "modern", "pharmacy first", "services", "nhs", "minor ailments" },
+            PharmacyFirstCanvas(),
+            createdAtUtc: ModernSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-menopause-support",
+            "Menopause Support",
+            "Warm, calm layout for a sensitive subject. Leads with reassurance rather than symptoms.",
+            TemplateCategory.Awareness,
+            new[] { "modern", "menopause", "womens health", "hrt", "support" },
+            MenopauseSupportCanvas(),
+            createdAtUtc: ModernSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-medicine-delivery",
+            "Free Prescription Delivery",
+            "High-contrast layout with angled stripes and a numbered three-step explainer.",
+            TemplateCategory.Promotion,
+            new[] { "modern", "delivery", "repeat prescription", "free", "service" },
+            MedicineDeliveryCanvas(),
+            createdAtUtc: ModernSetDate);
+
+        yield return Template.CreateWithId(
+            "sys-new-year-health",
+            "New Year Health Check",
+            "Split-panel editorial design with a vertical year mark and a four-metric card grid.",
+            TemplateCategory.Seasonal,
+            new[] { "modern", "new year", "health check", "screening", "january" },
+            NewYearHealthCanvas(),
+            createdAtUtc: ModernSetDate);
+
+        // ---- Original set ----
+
         yield return Template.CreateWithId(
             "sys-flu-vaccination",
             "Flu Vaccination Reminder",
             "Bold A4 reminder that your pharmacy is offering flu shots.",
             TemplateCategory.Vaccination,
             new[] { "flu", "vaccine", "reminder", "seasonal" },
-            FluVaccinationCanvas());
+            FluVaccinationCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-vitamin-d",
@@ -33,7 +224,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Educational poster on the signs of Vitamin D deficiency.",
             TemplateCategory.Awareness,
             new[] { "vitamin", "wellness", "education" },
-            VitaminDCanvas());
+            VitaminDCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-loyalty-rewards",
@@ -41,7 +233,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "High-impact dark theme announcing a loyalty program.",
             TemplateCategory.Promotion,
             new[] { "loyalty", "promo", "rewards" },
-            LoyaltyRewardsCanvas());
+            LoyaltyRewardsCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-hand-hygiene",
@@ -49,7 +242,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Step-by-step poster on the 20-second handwashing technique.",
             TemplateCategory.Safety,
             new[] { "hygiene", "safety", "infection-control" },
-            HandHygieneCanvas());
+            HandHygieneCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-allergy-season",
@@ -57,7 +251,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Seasonal poster grouping antihistamines, sprays, and eye drops.",
             TemplateCategory.Seasonal,
             new[] { "allergy", "spring", "tips" },
-            AllergySeasonCanvas());
+            AllergySeasonCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-welcome",
@@ -65,7 +260,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Friendly welcome poster with three service highlights.",
             TemplateCategory.General,
             new[] { "welcome", "intro", "services" },
-            WelcomeCanvas());
+            WelcomeCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-covid-booster",
@@ -73,7 +269,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Clean clinical reminder for the autumn COVID-19 booster campaign.",
             TemplateCategory.Vaccination,
             new[] { "covid", "booster", "winter", "nhs" },
-            CovidBoosterCanvas());
+            CovidBoosterCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-diabetes-awareness",
@@ -81,7 +278,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Know-the-signs poster with a free in-pharmacy check offer.",
             TemplateCategory.Awareness,
             new[] { "diabetes", "screening", "wellness" },
-            DiabetesAwarenessCanvas());
+            DiabetesAwarenessCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-repeat-prescription",
@@ -89,7 +287,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Three-step explainer for your repeat prescription service.",
             TemplateCategory.General,
             new[] { "prescription", "repeat", "service" },
-            RepeatPrescriptionCanvas());
+            RepeatPrescriptionCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-travel-clinic",
@@ -97,7 +296,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Warm travel-themed poster covering vaccines, antimalarials, and kits.",
             TemplateCategory.Promotion,
             new[] { "travel", "clinic", "vaccine", "malaria" },
-            TravelClinicCanvas());
+            TravelClinicCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-stop-smoking",
@@ -105,7 +305,8 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Confident, supportive poster for your stop-smoking service.",
             TemplateCategory.Awareness,
             new[] { "smoking", "cessation", "support", "nrt" },
-            StopSmokingCanvas());
+            StopSmokingCanvas(),
+            createdAtUtc: OriginalSetDate);
 
         yield return Template.CreateWithId(
             "sys-childrens-cough-cold",
@@ -113,8 +314,1352 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
             "Safe-relief guidance and pharmacist red-flag advice for under-12s.",
             TemplateCategory.Seasonal,
             new[] { "children", "cough", "cold", "winter" },
-            ChildrensCoughColdCanvas());
+            ChildrensCoughColdCanvas(),
+            createdAtUtc: OriginalSetDate);
     }
+
+    /* ------------------------------------------------------------------ *
+     * Modern set
+     *
+     * A newer visual language than the originals: full-bleed diagonal bands,
+     * oversized headlines, badge circles, and pill-shaped service chips.
+     *
+     * Built entirely from rect / circle / line / text because those are the
+     * only primitives all three renderers agree on — the Konva editor, the
+     * QuestPDF exporter, and the Python video pipeline. Images stay
+     * rectangular panels: the schema has no masking, so a "circular photo"
+     * would render as a circle in the browser and a square in the PDF.
+     * Geometry carries the styling instead, which also keeps every template
+     * fully recolourable from the editor.
+     * ------------------------------------------------------------------ */
+
+    /* ------------------------------------------------------------------ *
+     * Photographic set
+     *
+     * These lead with a photograph rather than geometry. Two techniques do
+     * the heavy lifting, both of which the schema already supports:
+     *
+     *   Scrim   — a solid rect at partial opacity laid over the photo, so
+     *             headline text stays legible whatever the image behind it.
+     *   Duotone — the same idea pushed hard (0.75+), which flattens the photo
+     *             into the brand colour and is what gives the modern look.
+     *
+     * The three photo URLs are the ones already proven in the original
+     * templates. Unsplash ids are reused deliberately rather than adding new
+     * unverified ones — a hero image that 404s ruins the poster, and each is
+     * treated differently enough not to read as repetition.
+     *
+     * Pharmacies should replace these with their own photography via the
+     * editor; hotlinked stock is a placeholder, not a dependency to build on.
+     * ------------------------------------------------------------------ */
+
+    private const string PhotoPharmacist = "https://images.unsplash.com/photo-1559757175-5700dde675bc?w=1400&q=80&auto=format&fit=crop";
+    private const string PhotoClinical = "https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1400&q=80&auto=format&fit=crop";
+    private const string PhotoVaccine = "https://images.unsplash.com/photo-1612277795421-9bc7706a4a34?w=1400&q=80&auto=format&fit=crop";
+
+    private static string VaccinationClinicCanvas() => Canvas(
+        name: "Vaccination Clinic Open",
+        background: "#0f172a",
+        shapes: $$$"""
+        [
+          {"id":"hero","kind":"image","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "blobKey":"{{{PhotoVaccine}}}","width":1240,"height":920},
+
+          {"id":"scrim","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.62,"draggable":true,"zIndex":2,
+           "width":1240,"height":920,"fill":"#0f172a"},
+
+          {"id":"scrim-deep","kind":"rect","position":{"x":0,"y":520},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.55,"draggable":true,"zIndex":3,
+           "width":1240,"height":400,"fill":"#0f172a"},
+
+          {"id":"tag","kind":"rect","position":{"x":90,"y":140},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "width":260,"height":62,"fill":"#22d3ee","cornerRadius":31},
+
+          {"id":"tag-text","kind":"text","position":{"x":90,"y":157},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"OPEN NOW","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#083344","width":260,"align":"center"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":300},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"VACCINATION","fontSize":118,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":430},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"CLINIC","fontSize":118,"fontFamily":"Inter, sans-serif",
+           "fill":"#67e8f9","width":1060,"align":"left"},
+
+          {"id":"hero-sub","kind":"text","position":{"x":90,"y":620},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"Flu, COVID, shingles and travel jabs — all under one roof, most without an appointment.",
+           "fontSize":32,"fontFamily":"Inter, sans-serif","fill":"#e2e8f0","width":900,"align":"left"},
+
+          {"id":"panel","kind":"rect","position":{"x":90,"y":840},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "width":1060,"height":560,"fill":"#ffffff","cornerRadius":28},
+
+          {"id":"panel-title","kind":"text","position":{"x":150,"y":900},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"This week's clinic","fontSize":46,"fontFamily":"Inter, sans-serif",
+           "fill":"#0f172a","width":940,"align":"left"},
+
+          {"id":"row-1","kind":"text","position":{"x":150,"y":1000},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Mon – Fri","fontSize":32,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":300,"align":"left"},
+
+          {"id":"row-1-val","kind":"text","position":{"x":520,"y":1000},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"9:00am – 6:30pm","fontSize":32,"fontFamily":"Inter, sans-serif",
+           "fill":"#0f172a","width":560,"align":"left"},
+
+          {"id":"row-1-rule","kind":"line","position":{"x":150,"y":1060},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "points":[0,0,940,0],"stroke":"#e2e8f0","strokeWidth":2},
+
+          {"id":"row-2","kind":"text","position":{"x":150,"y":1090},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Saturday","fontSize":32,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":300,"align":"left"},
+
+          {"id":"row-2-val","kind":"text","position":{"x":520,"y":1090},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"9:00am – 1:00pm","fontSize":32,"fontFamily":"Inter, sans-serif",
+           "fill":"#0f172a","width":560,"align":"left"},
+
+          {"id":"row-2-rule","kind":"line","position":{"x":150,"y":1150},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "points":[0,0,940,0],"stroke":"#e2e8f0","strokeWidth":2},
+
+          {"id":"row-3","kind":"text","position":{"x":150,"y":1180},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Bring","fontSize":32,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":300,"align":"left"},
+
+          {"id":"row-3-val","kind":"text","position":{"x":520,"y":1180},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"A short-sleeved top. That's it.","fontSize":32,
+           "fontFamily":"Inter, sans-serif","fill":"#0f172a","width":560,"align":"left"},
+
+          {"id":"note","kind":"text","position":{"x":150,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Eligible for a free NHS vaccination? We'll check for you at the counter.",
+           "fontSize":26,"fontFamily":"Inter, sans-serif","fill":"#64748b","width":940,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":90,"y":1450},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "width":1060,"height":160,"fill":"#22d3ee","cornerRadius":28},
+
+          {"id":"cta-title","kind":"text","position":{"x":150,"y":1485},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Walk in today","fontSize":50,"fontFamily":"Inter, sans-serif",
+           "fill":"#083344","width":940,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":150,"y":1548},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#155e75","width":940,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1670},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Suitability is assessed before every vaccination. Tell us about allergies and current medicines.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#94a3b8","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string AskPharmacistCanvas() => Canvas(
+        name: "Ask Your Pharmacist",
+        background: "#134e4a",
+        shapes: $$$"""
+        [
+          {"id":"photo","kind":"image","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "blobKey":"{{{PhotoPharmacist}}}","width":1240,"height":1754},
+
+          {"id":"duotone","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.82,"draggable":true,"zIndex":2,
+           "width":1240,"height":1754,"fill":"#134e4a"},
+
+          {"id":"accent-wash","kind":"rect","position":{"x":0,"y":1100},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.5,"draggable":true,"zIndex":3,
+           "width":1240,"height":654,"fill":"#042f2e"},
+
+          {"id":"rule-top","kind":"line","position":{"x":90,"y":180},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "points":[0,0,1060,0],"stroke":"#5eead4","strokeWidth":4},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":215},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"NO APPOINTMENT  •  NO REFERRAL  •  NO CHARGE","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#5eead4","width":1060,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":420},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"ASK YOUR","fontSize":150,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":580},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"PHARMACIST","fontSize":150,"fontFamily":"Inter, sans-serif",
+           "fill":"#2dd4bf","width":1060,"align":"left"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":800},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Qualified healthcare professionals. On the high street. Available today.",
+           "fontSize":38,"fontFamily":"Inter, sans-serif","fill":"#ccfbf1","width":980,"align":"left"},
+
+          {"id":"q-1","kind":"text","position":{"x":90,"y":1180},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"“Is this rash something to worry about?”","fontSize":36,
+           "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"q-2","kind":"text","position":{"x":90,"y":1260},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"“Can I take these two together?”","fontSize":36,
+           "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"q-3","kind":"text","position":{"x":90,"y":1340},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"“Do I actually need to see a doctor?”","fontSize":36,
+           "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"rule-bottom","kind":"line","position":{"x":90,"y":1440},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "points":[0,0,1060,0],"stroke":"#0d9488","strokeWidth":3},
+
+          {"id":"cta","kind":"text","position":{"x":90,"y":1490},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Just walk in and ask.","fontSize":58,"fontFamily":"Inter, sans-serif",
+           "fill":"#5eead4","width":1060,"align":"left"},
+
+          {"id":"contact","kind":"text","position":{"x":90,"y":1580},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#99f6e4","width":1060,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1670},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"For anything urgent or severe, contact NHS 111 or emergency services.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#5eead4","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string DiabetesScreeningCanvas() => Canvas(
+        name: "Diabetes Risk Check",
+        background: "#ffffff",
+        shapes: $$$"""
+        [
+          {"id":"photo","kind":"image","position":{"x":620,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "blobKey":"{{{PhotoClinical}}}","width":620,"height":1130},
+
+          {"id":"photo-tint","kind":"rect","position":{"x":620,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.28,"draggable":true,"zIndex":2,
+           "width":620,"height":1130,"fill":"#7c2d12"},
+
+          {"id":"left-panel","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":620,"height":1130,"fill":"#fff7ed"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":80,"y":170},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"TAKES 10 MINUTES","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#c2410c","width":460,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":80,"y":240},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"COULD","fontSize":96,"fontFamily":"Inter, sans-serif",
+           "fill":"#7c2d12","width":460,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":80,"y":345},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"YOU BE","fontSize":96,"fontFamily":"Inter, sans-serif",
+           "fill":"#7c2d12","width":460,"align":"left"},
+
+          {"id":"headline-3","kind":"text","position":{"x":80,"y":450},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"AT RISK?","fontSize":96,"fontFamily":"Inter, sans-serif",
+           "fill":"#ea580c","width":460,"align":"left"},
+
+          {"id":"rule","kind":"line","position":{"x":80,"y":600},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "points":[0,0,200,0],"stroke":"#ea580c","strokeWidth":8},
+
+          {"id":"lede","kind":"text","position":{"x":80,"y":650},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Around one in three adults with type 2 diabetes doesn't know they have it.",
+           "fontSize":30,"fontFamily":"Inter, sans-serif","fill":"#431407","width":460,"align":"left"},
+
+          {"id":"lede-2","kind":"text","position":{"x":80,"y":830},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"A quick check here can tell you where you stand.","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#9a3412","width":460,"align":"left"},
+
+          {"id":"who-title","kind":"text","position":{"x":90,"y":1230},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Worth checking if you…","fontSize":42,"fontFamily":"Inter, sans-serif",
+           "fill":"#431407","width":1060,"align":"left"},
+
+          {"id":"pill-1","kind":"rect","position":{"x":90,"y":1310},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "width":340,"height":80,"fill":"#ffedd5","cornerRadius":40},
+
+          {"id":"pill-1-text","kind":"text","position":{"x":90,"y":1334},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"Are over 40","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#7c2d12","width":340,"align":"center"},
+
+          {"id":"pill-2","kind":"rect","position":{"x":455,"y":1310},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "width":380,"height":80,"fill":"#ffedd5","cornerRadius":40},
+
+          {"id":"pill-2-text","kind":"text","position":{"x":455,"y":1334},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"Have a family history","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#7c2d12","width":380,"align":"center"},
+
+          {"id":"pill-3","kind":"rect","position":{"x":860,"y":1310},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "width":290,"height":80,"fill":"#ffedd5","cornerRadius":40},
+
+          {"id":"pill-3-text","kind":"text","position":{"x":860,"y":1334},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"Feel tired often","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#7c2d12","width":290,"align":"center"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":0,"y":1490},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1240,"height":180,"fill":"#7c2d12"},
+
+          {"id":"cta-title","kind":"text","position":{"x":90,"y":1530},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Book a risk check","fontSize":52,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":90,"y":1598},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#fdba74","width":1060,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1700},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"A risk check is not a diagnosis. A raised result means we will refer you to your GP for confirmation.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#64748b","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string ChildHealthClinicCanvas() => Canvas(
+        name: "Child Health Clinic",
+        background: "#f0f9ff",
+        shapes: $$$"""
+        [
+          {"id":"blob-1","kind":"circle","position":{"x":80,"y":120},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.5,"draggable":true,"zIndex":1,
+           "radius":190,"fill":"#bae6fd"},
+
+          {"id":"blob-2","kind":"circle","position":{"x":1180,"y":1620},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.55,"draggable":true,"zIndex":1,
+           "radius":230,"fill":"#a5b4fc"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":150},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"FOR PARENTS AND CARERS","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#0369a1","width":1060,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":215},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Little ones,","fontSize":106,"fontFamily":"Inter, sans-serif",
+           "fill":"#0c4a6e","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":335},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"big worries.","fontSize":106,"fontFamily":"Inter, sans-serif",
+           "fill":"#0284c7","width":1060,"align":"left"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":500},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"You don't need a GP appointment to get a straight answer about your child.",
+           "fontSize":32,"fontFamily":"Inter, sans-serif","fill":"#075985","width":1000,"align":"left"},
+
+          {"id":"photo-frame","kind":"rect","position":{"x":90,"y":640},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":460,"fill":"#0284c7","cornerRadius":32},
+
+          {"id":"photo","kind":"image","position":{"x":110,"y":660},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "blobKey":"{{{PhotoClinical}}}","width":1020,"height":420},
+
+          {"id":"photo-tint","kind":"rect","position":{"x":110,"y":660},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.2,"draggable":true,"zIndex":5,
+           "width":1020,"height":420,"fill":"#0c4a6e"},
+
+          {"id":"caption","kind":"rect","position":{"x":110,"y":990},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.85,"draggable":true,"zIndex":6,
+           "width":1020,"height":90,"fill":"#0c4a6e"},
+
+          {"id":"caption-text","kind":"text","position":{"x":150,"y":1018},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Free advice, seven days a week","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":940,"align":"left"},
+
+          {"id":"item-1-dot","kind":"circle","position":{"x":120,"y":1200},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":14,"fill":"#0284c7"},
+
+          {"id":"item-1","kind":"text","position":{"x":165,"y":1180},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Coughs, colds and temperatures","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#0c4a6e","width":980,"align":"left"},
+
+          {"id":"item-2-dot","kind":"circle","position":{"x":120,"y":1275},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":14,"fill":"#0284c7"},
+
+          {"id":"item-2","kind":"text","position":{"x":165,"y":1255},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Rashes, eczema and dry skin","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#0c4a6e","width":980,"align":"left"},
+
+          {"id":"item-3-dot","kind":"circle","position":{"x":120,"y":1350},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":14,"fill":"#0284c7"},
+
+          {"id":"item-3","kind":"text","position":{"x":165,"y":1330},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Teething, colic and feeding questions","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#0c4a6e","width":980,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":90,"y":1450},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "width":1060,"height":160,"fill":"#0c4a6e","cornerRadius":32},
+
+          {"id":"cta-title","kind":"text","position":{"x":150,"y":1485},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Come in and ask","fontSize":50,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":940,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":150,"y":1548},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#7dd3fc","width":940,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1665},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"If your child is very unwell, drowsy, or hard to wake, contact NHS 111 or emergency services straight away.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#0369a1","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string MensHealthCanvas() => Canvas(
+        name: "Men's Health MOT",
+        background: "#0a0a0a",
+        shapes: $$$"""
+        [
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":170},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"15 MINUTES  •  NO APPOINTMENT","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#a3e635","width":1060,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":250},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"THE","fontSize":150,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":400},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"MEN'S","fontSize":150,"fontFamily":"Inter, sans-serif",
+           "fill":"#a3e635","width":1060,"align":"left"},
+
+          {"id":"headline-3","kind":"text","position":{"x":90,"y":550},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"MOT","fontSize":150,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":760},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"You service the car every year. When did you last check yourself?",
+           "fontSize":36,"fontFamily":"Inter, sans-serif","fill":"#d4d4d8","width":1000,"align":"left"},
+
+          {"id":"stat-rule","kind":"line","position":{"x":90,"y":890},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "points":[0,0,1060,0],"stroke":"#3f3f46","strokeWidth":2},
+
+          {"id":"check-1","kind":"text","position":{"x":90,"y":930},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"01","fontSize":30,"fontFamily":"Inter, sans-serif",
+           "fill":"#a3e635","width":120,"align":"left"},
+
+          {"id":"check-1-text","kind":"text","position":{"x":220,"y":924},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Blood pressure","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":900,"align":"left"},
+
+          {"id":"check-2","kind":"text","position":{"x":90,"y":1010},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"02","fontSize":30,"fontFamily":"Inter, sans-serif",
+           "fill":"#a3e635","width":120,"align":"left"},
+
+          {"id":"check-2-text","kind":"text","position":{"x":220,"y":1004},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Cholesterol","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":900,"align":"left"},
+
+          {"id":"check-3","kind":"text","position":{"x":90,"y":1090},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"03","fontSize":30,"fontFamily":"Inter, sans-serif",
+           "fill":"#a3e635","width":120,"align":"left"},
+
+          {"id":"check-3-text","kind":"text","position":{"x":220,"y":1084},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Weight and BMI","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":900,"align":"left"},
+
+          {"id":"check-4","kind":"text","position":{"x":90,"y":1170},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"04","fontSize":30,"fontFamily":"Inter, sans-serif",
+           "fill":"#a3e635","width":120,"align":"left"},
+
+          {"id":"check-4-text","kind":"text","position":{"x":220,"y":1164},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"A frank conversation","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":900,"align":"left"},
+
+          {"id":"photo","kind":"image","position":{"x":0,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
+           "blobKey":"{{{PhotoPharmacist}}}","width":1240,"height":464},
+
+          {"id":"photo-scrim","kind":"rect","position":{"x":0,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.72,"draggable":true,"zIndex":3,
+           "width":1240,"height":464,"fill":"#0a0a0a"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":90,"y":1380},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "width":1060,"height":170,"fill":"#a3e635","cornerRadius":16},
+
+          {"id":"cta-title","kind":"text","position":{"x":140,"y":1418},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"Book yours today","fontSize":52,"fontFamily":"Inter, sans-serif",
+           "fill":"#1a2e05","width":960,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":140,"y":1484},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#365314","width":960,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1620},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"Screening checks are not diagnostic. Your pharmacist will explain your results and refer you where needed.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#a1a1aa","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string AsthmaReviewCanvas() => Canvas(
+        name: "Inhaler Technique Review",
+        background: "#faf5ff",
+        shapes: $$$"""
+        [
+          {"id":"header","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":1240,"height":680,"fill":"#4c1d95"},
+
+          {"id":"photo","kind":"image","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
+           "blobKey":"{{{PhotoVaccine}}}","width":1240,"height":680},
+
+          {"id":"photo-duotone","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.78,"draggable":true,"zIndex":3,
+           "width":1240,"height":680,"fill":"#4c1d95"},
+
+          {"id":"wedge","kind":"rect","position":{"x":-120,"y":600},"rotation":-5,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "width":1520,"height":220,"fill":"#faf5ff"},
+
+          {"id":"stat","kind":"text","position":{"x":90,"y":170},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"UP TO 9 IN 10","fontSize":34,"fontFamily":"Inter, sans-serif",
+           "fill":"#c4b5fd","width":1060,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":240},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"people use","fontSize":102,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":355},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"their inhaler","fontSize":102,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-3","kind":"text","position":{"x":90,"y":470},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"wrong.","fontSize":102,"fontFamily":"Inter, sans-serif",
+           "fill":"#a78bfa","width":1060,"align":"left"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":760},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"If the medicine isn't reaching your lungs, it isn't working. We'll watch your technique and put it right — free, in a few minutes.",
+           "fontSize":32,"fontFamily":"Inter, sans-serif","fill":"#3b0764","width":1060,"align":"left"},
+
+          {"id":"card-1","kind":"rect","position":{"x":90,"y":990},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1060,"height":130,"fill":"#ffffff","cornerRadius":22},
+
+          {"id":"card-1-num","kind":"text","position":{"x":140,"y":1025},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"01","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#a78bfa","width":100,"align":"left"},
+
+          {"id":"card-1-text","kind":"text","position":{"x":260,"y":1032},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Bring the inhalers you actually use","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#3b0764","width":840,"align":"left"},
+
+          {"id":"card-2","kind":"rect","position":{"x":90,"y":1140},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1060,"height":130,"fill":"#ffffff","cornerRadius":22},
+
+          {"id":"card-2-num","kind":"text","position":{"x":140,"y":1175},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"02","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#a78bfa","width":100,"align":"left"},
+
+          {"id":"card-2-text","kind":"text","position":{"x":260,"y":1182},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Show us how you take them","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#3b0764","width":840,"align":"left"},
+
+          {"id":"card-3","kind":"rect","position":{"x":90,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1060,"height":130,"fill":"#ffffff","cornerRadius":22},
+
+          {"id":"card-3-num","kind":"text","position":{"x":140,"y":1325},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"03","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#a78bfa","width":100,"align":"left"},
+
+          {"id":"card-3-text","kind":"text","position":{"x":260,"y":1332},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Leave breathing easier","fontSize":34,
+           "fontFamily":"Inter, sans-serif","fill":"#3b0764","width":840,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":0,"y":1500},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "width":1240,"height":170,"fill":"#4c1d95"},
+
+          {"id":"cta-title","kind":"text","position":{"x":90,"y":1535},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Ask for an inhaler check","fontSize":50,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":90,"y":1600},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#c4b5fd","width":1060,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1700},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":7,
+           "text":"Never stop or change prescribed inhalers without advice. If your breathing worsens suddenly, seek urgent medical help.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#7c3aed","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string BloodPressureCanvas() => Canvas(
+        name: "Blood Pressure Check",
+        background: "#f8fafc",
+        shapes: """
+        [
+          {"id":"band-accent","kind":"rect","position":{"x":-120,"y":300},"rotation":-8,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":1520,"height":16,"fill":"#22d3ee"},
+
+          {"id":"band","kind":"rect","position":{"x":-120,"y":330},"rotation":-8,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
+           "width":1520,"height":430,"fill":"#0e7490"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":150},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"FREE IN-STORE SERVICE","fontSize":30,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":1060,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":390},"rotation":-8,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"KNOW YOUR","fontSize":124,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":530},"rotation":-8,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"NUMBERS","fontSize":124,"fontFamily":"Inter, sans-serif",
+           "fill":"#a5f3fc","width":1060,"align":"left"},
+
+          {"id":"stat-ring","kind":"circle","position":{"x":940,"y":1010},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":210,"fill":"#ecfeff","stroke":"#0e7490","strokeWidth":10},
+
+          {"id":"stat-value","kind":"text","position":{"x":740,"y":940},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"120/80","fontSize":86,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":400,"align":"center"},
+
+          {"id":"stat-label","kind":"text","position":{"x":740,"y":1045},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"the healthy target","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#155e75","width":400,"align":"center"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":860},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"High blood pressure has no symptoms.","fontSize":44,
+           "fontFamily":"Inter, sans-serif","fill":"#0f172a","width":600,"align":"left"},
+
+          {"id":"lede-2","kind":"text","position":{"x":90,"y":950},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"A two-minute check today could protect your heart for years.",
+           "fontSize":28,"fontFamily":"Inter, sans-serif","fill":"#475569","width":600,"align":"left"},
+
+          {"id":"chip-1","kind":"rect","position":{"x":90,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":330,"height":74,"fill":"#ecfeff","cornerRadius":37},
+
+          {"id":"chip-1-text","kind":"text","position":{"x":90,"y":1312},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"No appointment","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":330,"align":"center"},
+
+          {"id":"chip-2","kind":"rect","position":{"x":445,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":300,"height":74,"fill":"#ecfeff","cornerRadius":37},
+
+          {"id":"chip-2-text","kind":"text","position":{"x":445,"y":1312},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Takes 2 minutes","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":300,"align":"center"},
+
+          {"id":"chip-3","kind":"rect","position":{"x":770,"y":1290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":380,"height":74,"fill":"#ecfeff","cornerRadius":37},
+
+          {"id":"chip-3-text","kind":"text","position":{"x":770,"y":1312},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Results explained","fontSize":26,"fontFamily":"Inter, sans-serif",
+           "fill":"#0e7490","width":380,"align":"center"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":0,"y":1500},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1240,"height":180,"fill":"#0f172a"},
+
+          {"id":"cta-title","kind":"text","position":{"x":90,"y":1540},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Ask at the counter","fontSize":52,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":700,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":90,"y":1608},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#94a3b8","width":700,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1706},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"A reading is not a diagnosis. Speak to your pharmacist or GP about your result.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#64748b","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string WinterWellnessCanvas() => Canvas(
+        name: "Winter Wellness Offer",
+        background: "#0c4a6e",
+        shapes: """
+        [
+          {"id":"glow-1","kind":"circle","position":{"x":1120,"y":260},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.25,"draggable":true,"zIndex":1,
+           "radius":320,"fill":"#38bdf8"},
+
+          {"id":"glow-2","kind":"circle","position":{"x":120,"y":1500},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.18,"draggable":true,"zIndex":1,
+           "radius":260,"fill":"#22d3ee"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":170},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"WINTER 2026","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#7dd3fc","width":1060,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":250},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"STAY WELL","fontSize":140,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":400},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"THIS WINTER","fontSize":140,"fontFamily":"Inter, sans-serif",
+           "fill":"#38bdf8","width":1060,"align":"left"},
+
+          {"id":"rule","kind":"line","position":{"x":90,"y":600},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "points":[0,0,300,0],"stroke":"#22d3ee","strokeWidth":8},
+
+          {"id":"sub","kind":"text","position":{"x":90,"y":650},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Everything you need to get through the cold months, in one place.",
+           "fontSize":34,"fontFamily":"Inter, sans-serif","fill":"#bae6fd","width":760,"align":"left"},
+
+          {"id":"badge","kind":"circle","position":{"x":1010,"y":690},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":150,"fill":"#facc15"},
+
+          {"id":"badge-value","kind":"text","position":{"x":860,"y":625},"rotation":-10,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"20% OFF","fontSize":52,"fontFamily":"Inter, sans-serif",
+           "fill":"#422006","width":300,"align":"center"},
+
+          {"id":"badge-sub","kind":"text","position":{"x":860,"y":700},"rotation":-10,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "text":"selected lines","fontSize":22,"fontFamily":"Inter, sans-serif",
+           "fill":"#713f12","width":300,"align":"center"},
+
+          {"id":"card-1","kind":"rect","position":{"x":90,"y":900},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":220,"fill":"#075985","cornerRadius":24},
+
+          {"id":"card-1-title","kind":"text","position":{"x":130,"y":950},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Flu jabs","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":420,"align":"left"},
+
+          {"id":"card-1-body","kind":"text","position":{"x":130,"y":1015},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Walk in any weekday, no booking needed.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#bae6fd","width":420,"align":"left"},
+
+          {"id":"card-2","kind":"rect","position":{"x":650,"y":900},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":220,"fill":"#075985","cornerRadius":24},
+
+          {"id":"card-2-title","kind":"text","position":{"x":690,"y":950},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Vitamin D","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":420,"align":"left"},
+
+          {"id":"card-2-body","kind":"text","position":{"x":690,"y":1015},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Recommended for everyone October to March.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#bae6fd","width":420,"align":"left"},
+
+          {"id":"card-3","kind":"rect","position":{"x":90,"y":1160},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":220,"fill":"#075985","cornerRadius":24},
+
+          {"id":"card-3-title","kind":"text","position":{"x":130,"y":1210},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Cold + flu","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":420,"align":"left"},
+
+          {"id":"card-3-body","kind":"text","position":{"x":130,"y":1275},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Pharmacist-picked remedies for the whole family.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#bae6fd","width":420,"align":"left"},
+
+          {"id":"card-4","kind":"rect","position":{"x":650,"y":1160},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":220,"fill":"#075985","cornerRadius":24},
+
+          {"id":"card-4-title","kind":"text","position":{"x":690,"y":1210},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Free advice","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":420,"align":"left"},
+
+          {"id":"card-4-body","kind":"text","position":{"x":690,"y":1275},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Speak to a pharmacist, no appointment.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#bae6fd","width":420,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":90,"y":1450},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1060,"height":170,"fill":"#facc15","cornerRadius":24},
+
+          {"id":"cta-title","kind":"text","position":{"x":130,"y":1490},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Pop in this week","fontSize":52,"fontFamily":"Inter, sans-serif",
+           "fill":"#422006","width":980,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":130,"y":1555},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#713f12","width":980,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1680},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Offer subject to availability. Ask a pharmacist whether a product is suitable for you.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#7dd3fc","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string PharmacyFirstCanvas() => Canvas(
+        name: "Pharmacy First Services",
+        background: "#ffffff",
+        shapes: """
+        [
+          {"id":"header","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":1240,"height":520,"fill":"#065f46"},
+
+          {"id":"header-wedge","kind":"rect","position":{"x":-120,"y":420},"rotation":-6,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
+           "width":1520,"height":200,"fill":"#ffffff"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":120},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"SEEN TODAY, NOT NEXT WEEK","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#6ee7b7","width":1060,"align":"left"},
+
+          {"id":"headline","kind":"text","position":{"x":90,"y":190},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"START WITH","fontSize":110,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":305},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"{{pharmacy_name}}","fontSize":110,"fontFamily":"Inter, sans-serif",
+           "fill":"#34d399","width":1060,"align":"left"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":640},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Your pharmacist can assess and treat these conditions without a GP appointment.",
+           "fontSize":32,"fontFamily":"Inter, sans-serif","fill":"#334155","width":1060,"align":"left"},
+
+          {"id":"row-1","kind":"rect","position":{"x":90,"y":770},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":96,"fill":"#f0fdf4","cornerRadius":18},
+
+          {"id":"row-1-dot","kind":"circle","position":{"x":150,"y":818},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":16,"fill":"#059669"},
+
+          {"id":"row-1-text","kind":"text","position":{"x":200,"y":798},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Sore throat","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#064e3b","width":900,"align":"left"},
+
+          {"id":"row-2","kind":"rect","position":{"x":90,"y":886},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":96,"fill":"#f0fdf4","cornerRadius":18},
+
+          {"id":"row-2-dot","kind":"circle","position":{"x":150,"y":934},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":16,"fill":"#059669"},
+
+          {"id":"row-2-text","kind":"text","position":{"x":200,"y":914},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Earache (ages 1–17)","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#064e3b","width":900,"align":"left"},
+
+          {"id":"row-3","kind":"rect","position":{"x":90,"y":1002},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":96,"fill":"#f0fdf4","cornerRadius":18},
+
+          {"id":"row-3-dot","kind":"circle","position":{"x":150,"y":1050},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":16,"fill":"#059669"},
+
+          {"id":"row-3-text","kind":"text","position":{"x":200,"y":1030},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Sinusitis","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#064e3b","width":900,"align":"left"},
+
+          {"id":"row-4","kind":"rect","position":{"x":90,"y":1118},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":96,"fill":"#f0fdf4","cornerRadius":18},
+
+          {"id":"row-4-dot","kind":"circle","position":{"x":150,"y":1166},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":16,"fill":"#059669"},
+
+          {"id":"row-4-text","kind":"text","position":{"x":200,"y":1146},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Impetigo","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#064e3b","width":900,"align":"left"},
+
+          {"id":"row-5","kind":"rect","position":{"x":90,"y":1234},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":96,"fill":"#f0fdf4","cornerRadius":18},
+
+          {"id":"row-5-dot","kind":"circle","position":{"x":150,"y":1282},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":16,"fill":"#059669"},
+
+          {"id":"row-5-text","kind":"text","position":{"x":200,"y":1262},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Shingles","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#064e3b","width":900,"align":"left"},
+
+          {"id":"row-6","kind":"rect","position":{"x":90,"y":1350},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":96,"fill":"#f0fdf4","cornerRadius":18},
+
+          {"id":"row-6-dot","kind":"circle","position":{"x":150,"y":1398},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "radius":16,"fill":"#059669"},
+
+          {"id":"row-6-text","kind":"text","position":{"x":200,"y":1378},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Urinary tract infection (women 16–64)","fontSize":38,
+           "fontFamily":"Inter, sans-serif","fill":"#064e3b","width":900,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":0,"y":1520},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1240,"height":160,"fill":"#065f46"},
+
+          {"id":"cta-title","kind":"text","position":{"x":90,"y":1555},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Just ask — no appointment","fontSize":46,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":1060,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":90,"y":1615},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#6ee7b7","width":1060,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1706},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Eligibility criteria apply and vary by condition. Your pharmacist will advise if you need to see a GP.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#64748b","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string MenopauseSupportCanvas() => Canvas(
+        name: "Menopause Support",
+        background: "#fdf2f8",
+        shapes: """
+        [
+          {"id":"arc","kind":"circle","position":{"x":1240,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "radius":460,"fill":"#fbcfe8"},
+
+          {"id":"arc-2","kind":"circle","position":{"x":0,"y":1754},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":0.7,"draggable":true,"zIndex":1,
+           "radius":360,"fill":"#f9a8d4"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":220},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"YOU DON'T HAVE TO PUSH THROUGH IT","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#9d174d","width":760,"align":"left"},
+
+          {"id":"headline","kind":"text","position":{"x":90,"y":290},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Menopause","fontSize":118,"fontFamily":"Inter, sans-serif",
+           "fill":"#500724","width":900,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":420},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"support, here.","fontSize":118,"fontFamily":"Inter, sans-serif",
+           "fill":"#be185d","width":900,"align":"left"},
+
+          {"id":"rule","kind":"line","position":{"x":90,"y":600},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "points":[0,0,240,0],"stroke":"#be185d","strokeWidth":6},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":650},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Hot flushes, broken sleep, low mood, brain fog. These are treatable — and worth talking about.",
+           "fontSize":34,"fontFamily":"Inter, sans-serif","fill":"#831843","width":900,"align":"left"},
+
+          {"id":"panel","kind":"rect","position":{"x":90,"y":840},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":1060,"height":520,"fill":"#ffffff","cornerRadius":32},
+
+          {"id":"panel-title","kind":"text","position":{"x":150,"y":900},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"What we can help with","fontSize":44,"fontFamily":"Inter, sans-serif",
+           "fill":"#500724","width":940,"align":"left"},
+
+          {"id":"item-1","kind":"text","position":{"x":150,"y":1000},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"—   A private conversation, no appointment needed","fontSize":30,
+           "fontFamily":"Inter, sans-serif","fill":"#831843","width":940,"align":"left"},
+
+          {"id":"item-2","kind":"text","position":{"x":150,"y":1075},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"—   Understanding your HRT options","fontSize":30,
+           "fontFamily":"Inter, sans-serif","fill":"#831843","width":940,"align":"left"},
+
+          {"id":"item-3","kind":"text","position":{"x":150,"y":1150},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"—   Managing symptoms day to day","fontSize":30,
+           "fontFamily":"Inter, sans-serif","fill":"#831843","width":940,"align":"left"},
+
+          {"id":"item-4","kind":"text","position":{"x":150,"y":1225},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"—   Bone and heart health as you age","fontSize":30,
+           "fontFamily":"Inter, sans-serif","fill":"#831843","width":940,"align":"left"},
+
+          {"id":"quote","kind":"text","position":{"x":150,"y":1300},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Ask for a quiet word — we have a private consultation room.",
+           "fontSize":26,"fontFamily":"Inter, sans-serif","fill":"#be185d","width":940,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":90,"y":1430},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1060,"height":160,"fill":"#500724","cornerRadius":32},
+
+          {"id":"cta-title","kind":"text","position":{"x":150,"y":1465},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Come and talk to us","fontSize":48,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":940,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":150,"y":1527},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#f9a8d4","width":940,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1660},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Information only and not a substitute for medical advice. Your pharmacist will refer you to your GP where appropriate.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#9d174d","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string MedicineDeliveryCanvas() => Canvas(
+        name: "Free Prescription Delivery",
+        background: "#1e1b4b",
+        shapes: """
+        [
+          {"id":"stripe-1","kind":"rect","position":{"x":760,"y":-200},"rotation":22,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":260,"height":2200,"fill":"#312e81"},
+
+          {"id":"stripe-2","kind":"rect","position":{"x":1010,"y":-200},"rotation":22,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":120,"height":2200,"fill":"#4338ca"},
+
+          {"id":"stripe-3","kind":"rect","position":{"x":1150,"y":-200},"rotation":22,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":48,"height":2200,"fill":"#818cf8"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":200},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"NO CHARGE  •  NO FUSS","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#a5b4fc","width":700,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":280},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"WE BRING","fontSize":132,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":700,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":420},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"IT TO YOU","fontSize":132,"fontFamily":"Inter, sans-serif",
+           "fill":"#818cf8","width":700,"align":"left"},
+
+          {"id":"lede","kind":"text","position":{"x":90,"y":620},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Free local delivery on repeat prescriptions, straight to your door.",
+           "fontSize":34,"fontFamily":"Inter, sans-serif","fill":"#c7d2fe","width":640,"align":"left"},
+
+          {"id":"step-1-num","kind":"circle","position":{"x":150,"y":870},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":52,"fill":"#818cf8"},
+
+          {"id":"step-1-digit","kind":"text","position":{"x":100,"y":838},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"1","fontSize":54,"fontFamily":"Inter, sans-serif",
+           "fill":"#1e1b4b","width":100,"align":"center"},
+
+          {"id":"step-1-title","kind":"text","position":{"x":240,"y":830},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Tell us once","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":700,"align":"left"},
+
+          {"id":"step-1-body","kind":"text","position":{"x":240,"y":885},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Sign up in store or over the phone.","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#a5b4fc","width":620,"align":"left"},
+
+          {"id":"step-2-num","kind":"circle","position":{"x":150,"y":1050},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":52,"fill":"#818cf8"},
+
+          {"id":"step-2-digit","kind":"text","position":{"x":100,"y":1018},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"2","fontSize":54,"fontFamily":"Inter, sans-serif",
+           "fill":"#1e1b4b","width":100,"align":"center"},
+
+          {"id":"step-2-title","kind":"text","position":{"x":240,"y":1010},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"We handle the rest","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":700,"align":"left"},
+
+          {"id":"step-2-body","kind":"text","position":{"x":240,"y":1065},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"We order from your surgery each month.","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#a5b4fc","width":620,"align":"left"},
+
+          {"id":"step-3-num","kind":"circle","position":{"x":150,"y":1230},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "radius":52,"fill":"#818cf8"},
+
+          {"id":"step-3-digit","kind":"text","position":{"x":100,"y":1198},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"3","fontSize":54,"fontFamily":"Inter, sans-serif",
+           "fill":"#1e1b4b","width":100,"align":"center"},
+
+          {"id":"step-3-title","kind":"text","position":{"x":240,"y":1190},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"It arrives","fontSize":40,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":700,"align":"left"},
+
+          {"id":"step-3-body","kind":"text","position":{"x":240,"y":1245},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Delivered free, on a day that suits you.","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#a5b4fc","width":620,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":90,"y":1400},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1060,"height":180,"fill":"#818cf8","cornerRadius":28},
+
+          {"id":"cta-title","kind":"text","position":{"x":140,"y":1440},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Sign up in 60 seconds","fontSize":52,"fontFamily":"Inter, sans-serif",
+           "fill":"#1e1b4b","width":960,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":140,"y":1508},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":26,
+           "fontFamily":"Inter, sans-serif","fill":"#312e81","width":960,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1650},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Free delivery within our local area. Ask in store for the postcodes we cover and typical delivery days.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#a5b4fc","width":1060,"align":"left"}
+        ]
+        """);
+
+    private static string NewYearHealthCanvas() => Canvas(
+        name: "New Year Health Check",
+        background: "#f1f5f9",
+        shapes: """
+        [
+          {"id":"panel-left","kind":"rect","position":{"x":0,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":1,
+           "width":1240,"height":740,"fill":"#111827"},
+
+          {"id":"accent-block","kind":"rect","position":{"x":840,"y":0},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
+           "width":400,"height":740,"fill":"#f97316"},
+
+          {"id":"accent-cut","kind":"rect","position":{"x":760,"y":-120},"rotation":14,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":300,"height":1000,"fill":"#111827"},
+
+          {"id":"year","kind":"text","position":{"x":880,"y":250},"rotation":90,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"2026","fontSize":150,"fontFamily":"Inter, sans-serif",
+           "fill":"#fdba74","width":600,"align":"left"},
+
+          {"id":"eyebrow","kind":"text","position":{"x":90,"y":170},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"A BETTER START","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "fill":"#f97316","width":700,"align":"left"},
+
+          {"id":"headline-1","kind":"text","position":{"x":90,"y":250},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"NEW YEAR","fontSize":126,"fontFamily":"Inter, sans-serif",
+           "fill":"#ffffff","width":740,"align":"left"},
+
+          {"id":"headline-2","kind":"text","position":{"x":90,"y":390},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"HEALTH CHECK","fontSize":92,"fontFamily":"Inter, sans-serif",
+           "fill":"#fb923c","width":740,"align":"left"},
+
+          {"id":"sub","kind":"text","position":{"x":90,"y":530},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Fifteen minutes. Four measurements. One honest conversation.",
+           "fontSize":30,"fontFamily":"Inter, sans-serif","fill":"#cbd5e1","width":700,"align":"left"},
+
+          {"id":"metric-1","kind":"rect","position":{"x":90,"y":830},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":190,"fill":"#ffffff","cornerRadius":20},
+
+          {"id":"metric-1-title","kind":"text","position":{"x":130,"y":870},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Blood pressure","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#111827","width":420,"align":"left"},
+
+          {"id":"metric-1-body","kind":"text","position":{"x":130,"y":925},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"The silent one. Worth knowing.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#64748b","width":420,"align":"left"},
+
+          {"id":"metric-2","kind":"rect","position":{"x":650,"y":830},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":190,"fill":"#ffffff","cornerRadius":20},
+
+          {"id":"metric-2-title","kind":"text","position":{"x":690,"y":870},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Cholesterol","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#111827","width":420,"align":"left"},
+
+          {"id":"metric-2-body","kind":"text","position":{"x":690,"y":925},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"A finger-prick test, results while you wait.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#64748b","width":420,"align":"left"},
+
+          {"id":"metric-3","kind":"rect","position":{"x":90,"y":1060},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":190,"fill":"#ffffff","cornerRadius":20},
+
+          {"id":"metric-3-title","kind":"text","position":{"x":130,"y":1100},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Weight + BMI","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#111827","width":420,"align":"left"},
+
+          {"id":"metric-3-body","kind":"text","position":{"x":130,"y":1155},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"No judgement, just a starting point.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#64748b","width":420,"align":"left"},
+
+          {"id":"metric-4","kind":"rect","position":{"x":650,"y":1060},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "width":500,"height":190,"fill":"#ffffff","cornerRadius":20},
+
+          {"id":"metric-4-title","kind":"text","position":{"x":690,"y":1100},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"Diabetes risk","fontSize":38,"fontFamily":"Inter, sans-serif",
+           "fill":"#111827","width":420,"align":"left"},
+
+          {"id":"metric-4-body","kind":"text","position":{"x":690,"y":1155},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
+           "text":"A few questions and a quick check.","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#64748b","width":420,"align":"left"},
+
+          {"id":"price-rule","kind":"line","position":{"x":90,"y":1330},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "points":[0,0,1060,0],"stroke":"#cbd5e1","strokeWidth":3},
+
+          {"id":"price","kind":"text","position":{"x":90,"y":1370},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":3,
+           "text":"Book yours — ask at the counter","fontSize":46,
+           "fontFamily":"Inter, sans-serif","fill":"#111827","width":1060,"align":"left"},
+
+          {"id":"cta-bar","kind":"rect","position":{"x":0,"y":1500},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
+           "width":1240,"height":170,"fill":"#f97316"},
+
+          {"id":"cta-title","kind":"text","position":{"x":90,"y":1535},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Start the year knowing","fontSize":50,"fontFamily":"Inter, sans-serif",
+           "fill":"#431407","width":1060,"align":"left"},
+
+          {"id":"cta-sub","kind":"text","position":{"x":90,"y":1600},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"{{pharmacy_name}}  •  {{phone}}  •  {{address}}","fontSize":24,
+           "fontFamily":"Inter, sans-serif","fill":"#7c2d12","width":1060,"align":"left"},
+
+          {"id":"footer","kind":"text","position":{"x":90,"y":1700},"rotation":0,
+           "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
+           "text":"Screening checks are not diagnostic. Your pharmacist will explain your results and refer you where needed.",
+           "fontSize":17,"fontFamily":"Inter, sans-serif","fill":"#64748b","width":1060,"align":"left"}
+        ]
+        """);
 
     private static string FluVaccinationCanvas() => Canvas(
         name: "Flu Vaccination Reminder",
@@ -179,7 +1724,7 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
 
           {"id":"cta-sub","kind":"text","position":{"x":140,"y":1505},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
-           "text":"555-0102  •  acmepharmacy.com","fontSize":28,
+           "text":"{{phone}}  •  {{address}}","fontSize":28,
            "fontFamily":"Inter, sans-serif","fill":"#cffafe","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1670},"rotation":0,
@@ -536,11 +2081,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
 
           {"id":"hdr-1","kind":"text","position":{"x":80,"y":50},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
-           "text":"Welcome to Acme Pharmacy","fontSize":52,
+           "text":"Welcome to {{pharmacy_name}}","fontSize":52,
            "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":1080,"align":"left"},
           {"id":"hdr-2","kind":"text","position":{"x":80,"y":120},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
-           "text":"Your community pharmacy since 1987","fontSize":24,
+           "text":"Your community pharmacy","fontSize":24,
            "fontFamily":"Inter, sans-serif","fill":"#cbd5e1","width":1080,"align":"left"},
 
           {"id":"main","kind":"text","position":{"x":80,"y":280},"rotation":0,
@@ -603,11 +2148,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":960,"align":"left"},
           {"id":"contact-2","kind":"text","position":{"x":140,"y":1240},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
-           "text":"123 Main Street, Anytown","fontSize":30,
+           "text":"{{address}}","fontSize":30,
            "fontFamily":"Inter, sans-serif","fill":"#cbd5e1","width":960,"align":"left"},
           {"id":"contact-3","kind":"text","position":{"x":140,"y":1290},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
-           "text":"555-0123  •  acmepharmacy.com","fontSize":30,
+           "text":"{{phone}}","fontSize":30,
            "fontFamily":"Inter, sans-serif","fill":"#cbd5e1","width":960,"align":"left"},
           {"id":"contact-4","kind":"text","position":{"x":140,"y":1360},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":4,
@@ -639,7 +2184,7 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fill":"#ffffff","width":236,"align":"center"},
           {"id":"hdr-t","kind":"text","position":{"x":380,"y":58},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":2,
-           "text":"Acme Pharmacy","fontSize":28,"fontFamily":"Inter, sans-serif",
+           "text":"{{pharmacy_name}}","fontSize":28,"fontFamily":"Inter, sans-serif",
            "fill":"#bae6fd","width":800,"align":"left"},
 
           {"id":"hero-blob","kind":"circle","position":{"x":1080,"y":420},"rotation":0,
@@ -745,11 +2290,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fill":"#ffffff","width":960,"align":"left"},
           {"id":"cta-sub","kind":"text","position":{"x":140,"y":1380},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
-           "text":"Scan the QR code or call 555-0102 to reserve a slot","fontSize":28,
+           "text":"Scan the QR code or call {{phone}} to reserve a slot","fontSize":28,
            "fontFamily":"Inter, sans-serif","fill":"#bae6fd","width":960,"align":"left"},
           {"id":"cta-line","kind":"text","position":{"x":140,"y":1430},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
-           "text":"acmepharmacy.com  •  Mon–Sat 9am – 7pm","fontSize":22,
+           "text":"{{address}}","fontSize":22,
            "fontFamily":"Inter, sans-serif","fill":"#7dd3fc","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1680},"rotation":0,
@@ -873,7 +2418,7 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fontSize":24,"fontFamily":"Inter, sans-serif","fill":"#dbeafe","width":860,"align":"left"},
           {"id":"cta-c","kind":"text","position":{"x":140,"y":1450},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
-           "text":"555-0102  •  acmepharmacy.com","fontSize":22,
+           "text":"{{phone}}  •  {{address}}","fontSize":22,
            "fontFamily":"Inter, sans-serif","fill":"#bfdbfe","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1690},"rotation":0,
@@ -1006,7 +2551,7 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":960,"align":"left"},
           {"id":"cta-s","kind":"text","position":{"x":140,"y":1530},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
-           "text":"555-0102  •  acmepharmacy.com","fontSize":22,
+           "text":"{{phone}}  •  {{address}}","fontSize":22,
            "fontFamily":"Inter, sans-serif","fill":"#a7f3d0","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1690},"rotation":0,
@@ -1154,11 +2699,11 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "width":1080,"height":160,"fill":"#ea580c","cornerRadius":20},
           {"id":"cta-t","kind":"text","position":{"x":140,"y":1480},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
-           "text":"Book online or call 555-0102","fontSize":42,
+           "text":"Book online or call {{phone}}","fontSize":42,
            "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":960,"align":"left"},
           {"id":"cta-s","kind":"text","position":{"x":140,"y":1540},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
-           "text":"acmepharmacy.com/travel","fontSize":24,
+           "text":"{{address}}","fontSize":24,
            "fontFamily":"Inter, sans-serif","fill":"#ffedd5","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1690},"rotation":0,
@@ -1308,7 +2853,7 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":960,"align":"left"},
           {"id":"cta-s","kind":"text","position":{"x":140,"y":1530},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":6,
-           "text":"Walk in, call 555-0102, or visit acmepharmacy.com/stop-smoking",
+           "text":"Walk in or call {{phone}}",
            "fontSize":22,"fontFamily":"Inter, sans-serif","fill":"#fecaca","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1690},"rotation":0,
@@ -1461,7 +3006,7 @@ public sealed class TemplateSeeder(ITemplateRepository repo) : ITemplateSeeder
            "fontFamily":"Inter, sans-serif","fill":"#ffffff","width":960,"align":"left"},
           {"id":"cta-s","kind":"text","position":{"x":140,"y":1540},"rotation":0,
            "scale":{"x":1,"y":1},"opacity":1,"draggable":true,"zIndex":5,
-           "text":"555-0102  •  acmepharmacy.com","fontSize":22,
+           "text":"{{phone}}  •  {{address}}","fontSize":22,
            "fontFamily":"Inter, sans-serif","fill":"#bfdbfe","width":960,"align":"left"},
 
           {"id":"footer","kind":"text","position":{"x":80,"y":1690},"rotation":0,

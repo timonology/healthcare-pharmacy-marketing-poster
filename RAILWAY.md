@@ -7,14 +7,14 @@ A step-by-step guide for deploying this monorepo to Railway from a GitHub repo. 
 | Service | What it is | Deploy on Railway? |
 |---|---|---|
 | `web` | Next.js front-end | Yes |
-| `api` | .NET 8 Web API | Yes |
-| MongoDB | Database (pharmacy profiles, posters, campaigns) | Yes (Railway plugin) |
-| `ai-service` | Optional Python LangChain helper | **No** — needs Azure OpenAI keys |
-| Azurite / Azure Blob | Logo storage for brand kit | **No** — brand-kit logo upload simply won't work in this deploy; the rest of the app does |
+| `api` | .NET 10 Web API | Yes |
+| MongoDB | Database (pharmacy profiles, posters, campaigns, **videos**) | Yes (Railway plugin) |
+| `ai-service` | Python video-agent worker (Claude + Tavily + Pexels + FFmpeg + MoviePy) | **Yes**, if you want the marketing-video feature. Skip only if you're deploying poster-only. |
+| Azurite / Azure Blob | Storage for brand-kit logos **and rendered MP4s** | Point at a real Azure Storage account (Blob Storage on Azure has a permanent free tier — 5 GB LRS). Without it, both logo upload and video generation break. |
 | Sonar Backend | Pharmacy FCode enrichment | Stays mocked (`Sonar:UseMock=true`) until you have real Sonar credentials |
-| SMTP | Email campaigns | Stays mocked (`Messaging:UseMock=true`) — flip when you wire a real provider |
+| SMTP / Mailjet | Email campaigns | Stays mocked (`Messaging:UseMock=true`) — flip when you wire a real provider |
 
-The free trial gives you $5 of compute, comfortably covering Mongo + 2 small services with light traffic.
+The free trial gives you $5 of compute. The web + api pair fits comfortably; adding the ai-service will consume most of it because the container is ~1.5 GB and MoviePy encodes are CPU-heavy. Budget accordingly, or skip ai-service for poster-only trials.
 
 ## Before you start
 
@@ -25,6 +25,12 @@ The free trial gives you $5 of compute, comfortably covering Mongo + 2 small ser
    openssl rand -hex 32
    ```
    Save the output — you'll paste it as `Jwt__Secret`.
+4. **If you plan to deploy the video-agent (`ai-service`):** grab three free-tier API keys ahead of time so the worker has everything it needs:
+   - [Anthropic Console](https://console.anthropic.com) → API Keys → copy `sk-ant-…`
+   - [Tavily Dashboard](https://tavily.com) → copy `tvly-…` (1,000 searches/month free)
+   - [Pexels API](https://www.pexels.com/api/new/) → copy the key (free, unlimited)
+   - **Required here:** [ElevenLabs](https://elevenlabs.io) — Railway is a datacentre and the free Edge-TTS path is refused from those networks.
+   - Optional: [Replicate](https://replicate.com) for AI cartoon imagery (Pro-only).
 
 ## Step 1. Create the project and add MongoDB
 
@@ -100,7 +106,75 @@ The free trial gives you $5 of compute, comfortably covering Mongo + 2 small ser
 
 5. **Settings → Networking → Target Port** — confirm this matches the port Next is binding to (printed in the logs as `Local: http://localhost:<PORT>`). If they don't match you get 502s. Setting it explicitly to `8080` is safest because that's what Railway's `$PORT` typically is, and the Dockerfile's `CMD` binds to `$PORT`.
 
-## Step 4. Update API CORS for the web URL
+## Step 4. Add the ai-service (video-agent worker)
+
+Skip this section if you only want posters + campaigns.
+
+1. **+ New** → **GitHub Repo** → same repo again.
+2. **Settings**:
+
+   | Field | Value |
+   |---|---|
+   | Service name | `ai-service` |
+   | Root Directory | `apps/ai-service` |
+   | Dockerfile Path | `apps/ai-service/Dockerfile` |
+   | Watch Paths | `apps/ai-service/**` |
+   | Build Command | *(leave blank)* |
+   | Start Command | *(leave blank — the Dockerfile's CMD runs uvicorn)* |
+
+3. **Variables** — same Mongo the API uses, same Blob account, plus the three required video-agent keys:
+
+   ```
+   Mongo__ConnectionString  = ${{MongoDB.MONGO_URL}}
+   Mongo__Database          = acme
+
+   # Point at the SAME Azure Blob account your API uses. The worker
+   # uploads MP4s to the same container the API signs read URLs for.
+   AzureBlob__ConnectionString = <your Azure Storage connection string>
+   AzureBlob__Container        = canvas-assets
+
+   # JWT — kept for parity with the API (canvas AI endpoint validates it)
+   JWT_SECRET   = <same value as the api service>
+   JWT_ISSUER   = acme-api
+   JWT_AUDIENCE = acme-clients
+
+   # Video agent — required
+   ANTHROPIC_API_KEY = sk-ant-...
+   ANTHROPIC_MODEL   = claude-haiku-4-5-20251001
+   TAVILY_API_KEY    = tvly-...
+   PEXELS_API_KEY    = ...
+
+   # Narration — REQUIRED here. Railway is a datacentre, and the free
+   # Edge-TTS path is refused from datacentre address ranges: leave this
+   # blank and every render fails at "Voicing… 45%". There is no fallback.
+   ELEVENLABS_API_KEY     =
+   ELEVENLABS_DEFAULT_VOICE_ID =     # optional; Rachel if unset
+
+   # Video agent — optional (leave blank to disable)
+   REPLICATE_API_TOKEN    =
+   REPLICATE_FLUX_MODEL   = black-forest-labs/flux-schnell
+
+   # Worker knobs
+   VIDEO_WORKER_ENABLED      = true
+   VIDEO_WORKER_POLL_SECONDS = 4
+   ```
+
+4. **Settings → Networking → Generate Domain** (optional — the ai-service only needs a URL if you want to hit `/health` from your laptop; the .NET API doesn't call it directly, it just shares Mongo).
+
+5. Tail **Deploy logs**. First build takes ~5–10 minutes because the image ships ffmpeg + imagemagick + moviepy + fonts (~1.5-2 GB). When it boots you should see:
+
+   ```
+   INFO  Video worker config: enabled=True poll=4.0s mongo=set db=acme blob=set container=canvas-assets anthropic=set tavily=set pexels=set replicate=off eleven=off
+   INFO  ✅ Video worker started (poll=4.0s)
+   INFO  Mongo reachable: mongo.railway.internal:27017 (db=acme)
+   INFO  Video worker idle (0 claimed, 0 pending in db)
+   ```
+
+   Any `MISSING` in the first line = a required env var is empty. `off` on the last two is expected if you didn't add those optional keys.
+
+6. **Sizing:** the free Hobby container is ~512 MB RAM — enough for the worker to boot but tight for MoviePy encoding a 15s 1080×1920 clip. If jobs OOM-kill mid-render, bump the service to a paid plan tier or move to Azure (see [`AZURE.md`](./AZURE.md)).
+
+## Step 5. Update API CORS for the web URL
 
 In the **api** service → **Variables**, add:
 
@@ -110,20 +184,22 @@ Cors__Origins__0 = https://<your-web-domain>.up.railway.app
 
 The double-underscore + index syntax is how ASP.NET Core configuration represents `Cors:Origins[0]` in env vars.
 
-## Step 5. Try it
+## Step 6. Try it
 
 1. Register an account → you should be sent to `/onboarding`.
 2. Fill the three steps (Pharmacy → Contact → Plan) → land on `/dashboard`.
 3. The dashboard shows your pharmacy name, plan card, recent posters (empty), campaigns card (empty).
 4. **Browse templates** → pick one → **Use template** → poster opens in the editor with your brand info already applied via *Apply pharmacy info*.
 5. Editor *Share* button opens the email modal; *PDF* downloads via QuestPDF; *PNG* exports the Konva stage.
+6. **If you deployed ai-service:** open `/videos`, type a topic (e.g. "why book your flu jab this autumn"), pick **AI script**, click Generate. The card will show `Queued` → `Researching… 5%` → progress up to `Ready` (~30-60 s). Downloads as a 9:16 MP4.
 
 What won't work without extra setup on this Railway deploy:
 
-- **Logo upload in the brand kit** — needs a real Azure Blob account.
-- **AI suggestions on the canvas** — needs the Python service + Azure OpenAI key.
+- **Logo upload in the brand kit + video output** — both need a real Azure Blob account. Blob Storage has a free tier (5 GB LRS forever); the connection string goes into `AzureBlob__ConnectionString` on both `api` and `ai-service`.
+- **Video generation** — needs the `ai-service` deployed (Step 4) with the three required keys (`ANTHROPIC_API_KEY`, `TAVILY_API_KEY`, `PEXELS_API_KEY`). Without ai-service, `POST /api/videos` still queues rows but nothing renders them and they sit in `Pending` forever.
+- **AI cartoon visuals in videos** (`visualStyle=AiImagery`) — Pro tier only, needs `REPLICATE_API_TOKEN` on the ai-service.
 - **Real Sonar FCode lookup** — `Sonar__UseMock=true` returns a deterministic stub; flip to `false` and add `Sonar__BaseUrl` + `Sonar__ApiKey` once you have credentials.
-- **Real email/SMS campaigns** — `Messaging__UseMock=true` logs the dispatch to stdout; flip and add SMTP / Twilio / Azure Communication credentials when ready.
+- **Real email/SMS campaigns** — `Messaging__UseMock=true` logs the dispatch to stdout; flip and add Mailjet / SMTP / Twilio credentials when ready.
 
 ## Free-tier survival tips
 
@@ -200,6 +276,19 @@ Add your web domain to `Cors__Origins__0` on the api service. The default only k
 **"Application failed to respond" page.**
 The container is up but isn't binding to `$PORT`. Confirm the Dockerfile's final command uses `${PORT:-…}` shell expansion (it does in this repo).
 
+**Videos sit in `Pending` forever.**
+The ai-service worker isn't picking them up. Check three things in order:
+
+1. Is `ai-service` deployed and healthy? `curl https://<ai-service-url>/health` should return `{"status":"ok"}`.
+2. Did the worker actually start? Tail its logs and look for `✅ Video worker started`. If you see `Video worker WILL NOT START — Mongo__ConnectionString is empty`, the env var didn't expand — check that `${{MongoDB.MONGO_URL}}` matches your Mongo plugin's display name.
+3. Are all three required keys set? The startup line lists them: `anthropic=set tavily=set pexels=set` should all say `set`. Any `MISSING` value → paste the missing key into Variables and redeploy.
+
+**Video worker starts but every render fails with `ContainerNotFound` on upload.**
+The Azure Blob container (`canvas-assets`) hasn't been created. The worker's `upload_file()` auto-creates it on first upload, so this should self-heal on the next attempt. If it persists, verify the connection string on `ai-service` matches the one on `api` — they must point at the same storage account.
+
+**Video worker starts but Mongo ping fails.**
+Railway's `${{MongoDB.MONGO_URL}}` resolves to the internal `mongo.railway.internal` hostname, which only works from other services in the same project. If you moved to MongoDB Atlas, paste the Atlas connection string directly (with URL-encoded password).
+
 ## Mental model recap
 
 ```
@@ -208,13 +297,21 @@ The container is up but isn't binding to `$PORT`. Confirm the Dockerfile's final
                           ├─ client-side fetch /api/* (BFF route handlers)
                           │                              │
                           │                              ▼
-                          └─ server-side fetch ───────▶ api (.NET) ──▶ MongoDB
-                                                          │
-                                                          ├─▶ Mock email/SMS sender
-                                                          ├─▶ Mock Sonar API
-                                                          └─▶ QuestPDF (renders PDFs)
+                          └─ server-side fetch ───────▶ api (.NET) ──▶ MongoDB ◀────┐
+                                                          │                         │
+                                                          ├─▶ Azure Blob ◀──────────│
+                                                          ├─▶ Mock email/SMS sender │
+                                                          ├─▶ Mock Sonar API        │
+                                                          └─▶ QuestPDF (PDFs)       │
+                                                                                    │
+                                                          ai-service (Python) ──────┘
+                                                          polls Mongo for Pending videos,
+                                                          runs LangGraph, uploads MP4s
+                                                          to the same Blob container
 ```
 
 Every browser request hits **web**. Auth and CRUD calls go through Next.js BFF route handlers carrying the JWT cookie. Those route handlers forward to **api** with a Bearer token. The browser never talks to the API directly.
 
-Once the deploy is healthy, the same flow that runs locally on `:3000` + `:5050` runs in the cloud over HTTPS.
+The **ai-service** never handles HTTP requests from the browser at all — the .NET API writes video jobs to Mongo, the ai-service polls Mongo, both share the Blob container. This means you can scale the two services independently: bump the ai-service to a bigger Railway plan for faster renders without touching the API.
+
+Once the deploy is healthy, the same flow that runs locally on `:3000` + `:5050` + `:8000` runs in the cloud over HTTPS.

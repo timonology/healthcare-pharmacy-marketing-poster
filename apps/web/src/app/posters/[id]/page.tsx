@@ -47,7 +47,7 @@ export default function PosterEditorPage() {
 
   if (!loaded) {
     return (
-      <main className="flex h-screen items-center justify-center text-sm text-muted-foreground">
+      <main className="flex h-app-screen items-center justify-center text-sm text-muted-foreground">
         Loading poster…
       </main>
     );

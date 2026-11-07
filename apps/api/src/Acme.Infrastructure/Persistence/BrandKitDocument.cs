@@ -28,4 +28,9 @@ internal sealed class PharmacyDetailsDocument
     [BsonElement("licenseNumber")] public string LicenseNumber { get; set; } = string.Empty;
     [BsonElement("phone")] public string Phone { get; set; } = string.Empty;
     [BsonElement("address")] public string Address { get; set; } = string.Empty;
+
+    // Absent on every kit saved before the booking link moved here from the
+    // pharmacy profile, which is why it is nullable rather than defaulted: no
+    // link is a real state, not a missing value to be filled in.
+    [BsonElement("bookingUrl")] public string? BookingUrl { get; set; }
 }

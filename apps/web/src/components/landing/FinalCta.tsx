@@ -18,11 +18,11 @@ export function FinalCta() {
 
           <div className="relative mx-auto max-w-2xl text-center text-primary-foreground">
             <h2 className="text-3xl font-bold tracking-tight md:text-4xl">
-              Ready to make your pharmacy look its best?
+              Ready to market your pharmacy professionally?
             </h2>
             <p className="mt-4 text-base/relaxed text-primary-foreground/90">
-              Join 500+ pharmacies designing professional marketing in minutes.
-              Free forever plan, no credit card required.
+              Posters, videos, email campaigns and screens with your brand kit
+              applied. Start on the free plan, no credit card required.
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Button

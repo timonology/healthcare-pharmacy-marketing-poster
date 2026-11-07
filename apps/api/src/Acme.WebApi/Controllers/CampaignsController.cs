@@ -4,6 +4,7 @@ using Acme.Application.Campaigns;
 using Acme.Application.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Acme.WebApi.Auditing;
 
 namespace Acme.WebApi.Controllers;
 
@@ -14,12 +15,18 @@ public sealed class CampaignsController(CampaignService service) : ControllerBas
 {
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<CampaignDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] string? sort,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken ct = default)
     {
         if (CurrentUserId() is not { } userId) return Unauthorized();
-        return Ok(await service.ListAsync(userId, ct));
+        // Sent date, or created for one never sent: newest first unless sort=oldest.
+        return Ok(await service.ListAsync(userId, ListWindow.From(sort, from, to), ct));
     }
 
+    [Audit("campaign.send", "campaign")]
     [HttpPost]
     [ProducesResponseType(typeof(CampaignDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -41,6 +48,7 @@ public sealed class CampaignsController(CampaignService service) : ControllerBas
         };
     }
 
+    [NoAudit("Read-only: counts the audience a draft would reach; nothing changes.")]
     [HttpPost("audience-preview")]
     [ProducesResponseType(typeof(CampaignAudiencePreview), StatusCodes.Status200OK)]
     public async Task<IActionResult> AudiencePreview(
@@ -56,6 +64,7 @@ public sealed class CampaignsController(CampaignService service) : ControllerBas
         };
     }
 
+    [Audit("campaign.retry", "campaign")]
     [HttpPost("{id}/retry")]
     [ProducesResponseType(typeof(CampaignDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -75,6 +84,7 @@ public sealed class CampaignsController(CampaignService service) : ControllerBas
         };
     }
 
+    [Audit("campaign.stop", "campaign")]
     [HttpPost("{id}/stop")]
     [ProducesResponseType(typeof(CampaignDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)

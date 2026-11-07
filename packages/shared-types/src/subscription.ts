@@ -12,14 +12,13 @@ export interface Plan {
   maxAiGenerationsPerMonth: number;
   maxCampaignRecipientsPerMonth: number;
   maxPatients: number;
+  maxVideosPerMonth: number;
+  aiVideoEnabled: boolean;
   watermark: boolean;
-  customTemplates: boolean;
-  emailExport: boolean;
-  teamCollaboration: boolean;
-  customBranding: boolean;
   analyticsDashboard: boolean;
-  priorityAi: boolean;
   highlights: string[];
+  /** Recurring social series active at once. 0: not on this plan. */
+  maxRecurringSeries?: number;
 }
 
 export interface Usage {
@@ -27,6 +26,7 @@ export interface Usage {
   aiGenerationsThisMonth: number;
   campaignRecipientsThisMonth: number;
   patients: number;
+  videosThisMonth: number;
 }
 
 export interface CurrentSubscription {

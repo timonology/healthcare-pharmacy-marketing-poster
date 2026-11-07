@@ -3,14 +3,17 @@
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, Pill, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
+import { safeRedirect } from "@/lib/safe-redirect";
+import { LogoMark } from "@/components/brand/LogoMark";
 
 export default function LoginPage() {
   return (
@@ -33,9 +36,7 @@ export default function LoginPage() {
       <main className="container relative flex min-h-screen items-center justify-center px-4 py-16">
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-lg">
-              <Pill className="h-6 w-6" />
-            </span>
+            <LogoMark className="h-12 w-12" title="Marketing25" />
             <h1 className="mt-5 text-2xl font-bold tracking-tight">
               Welcome back
             </h1>
@@ -88,7 +89,7 @@ function LoginForm() {
       const { user } = await api.login({ email, password });
       setUser(user);
       const fallback = user.onboardingCompleted ? "/dashboard" : "/onboarding";
-      const target = sanitizeRedirect(params.get("redirect")) ?? fallback;
+      const target = safeRedirect(params.get("redirect"), window.location.origin) ?? fallback;
       window.location.assign(target);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -96,8 +97,49 @@ function LoginForm() {
     }
   }
 
+  // Set by expireSession() when a session ends mid-use. Without this the user
+  // is silently dumped on the login page with no idea why, which reads like
+  // the app logged them out at random.
+  const reason = params.get("reason");
+  const expiryNotice =
+    reason === "inactive"
+      ? "You were signed out after a period of inactivity. This protects patient information on shared devices."
+      : reason === "expired"
+        ? "Your session timed out. Sign in again to pick up where you left off."
+        : reason === "revoked"
+          ? "You've been signed out. If this keeps happening, contact your administrator."
+          : null;
+
+  // Confirmations from the flows that end here. A password reset signs the
+  // account out everywhere, so it lands on this page — without a word of
+  // explanation that looks like the reset failed and dumped them at login.
+  const doneNotice =
+    params.get("reset") === "1"
+      ? "Your password has been changed. Sign in with your new password."
+      : params.get("activated") === "1"
+        ? "Your account is ready. Sign in to get started."
+        : null;
+
   return (
     <form onSubmit={onSubmit} className="space-y-4">
+      {doneNotice && (
+        <p
+          role="status"
+          className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-foreground"
+        >
+          {doneNotice}
+        </p>
+      )}
+
+      {expiryNotice && (
+        <p
+          role="status"
+          className="rounded-md border border-border/60 bg-muted/50 p-3 text-sm text-muted-foreground"
+        >
+          {expiryNotice}
+        </p>
+      )}
+
       <Button
         type="button"
         variant="outline"
@@ -133,15 +175,14 @@ function LoginForm() {
         <div className="flex items-center justify-between">
           <Label htmlFor="password">Password</Label>
           <Link
-            href="#forgot"
+            href="/forgot-password"
             className="text-xs font-medium text-primary hover:underline"
           >
             Forgot password?
           </Link>
         </div>
-        <Input
+        <PasswordInput
           id="password"
-          type="password"
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -231,8 +272,3 @@ function BackgroundDecor() {
   );
 }
 
-function sanitizeRedirect(raw: string | null): string | null {
-  if (!raw) return null;
-  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
-  return raw;
-}

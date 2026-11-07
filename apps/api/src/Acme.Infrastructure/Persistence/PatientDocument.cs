@@ -11,6 +11,8 @@ internal sealed class PatientDocument
     [BsonElement("phone")] public string? Phone { get; set; }
     [BsonElement("notes")] public string Notes { get; set; } = string.Empty;
     [BsonElement("groupIds")] public List<string> GroupIds { get; set; } = new();
+    [BsonElement("marketingConsentAtUtc")] [BsonIgnoreIfNull] public DateTime? MarketingConsentAtUtc { get; set; }
+    [BsonElement("marketingConsentSource")] [BsonIgnoreIfNull] public string? MarketingConsentSource { get; set; }
     [BsonElement("createdAtUtc")] public DateTime CreatedAtUtc { get; set; }
     [BsonElement("updatedAtUtc")] public DateTime UpdatedAtUtc { get; set; }
 }
@@ -21,6 +23,12 @@ internal sealed class PatientGroupDocument
     [BsonElement("ownerId")] public string OwnerId { get; set; } = default!;
     [BsonElement("name")] public string Name { get; set; } = default!;
     [BsonElement("description")] public string Description { get; set; } = string.Empty;
+    // Defaulted so every group written before global groups existed
+    // deserialises as one pharmacy's own — i.e. exactly as it behaved.
+    [BsonElement("scope")]
+    [BsonDefaultValue(0)]
+    public int Scope { get; set; }
+
     [BsonElement("patientCount")] public int PatientCount { get; set; }
     [BsonElement("createdAtUtc")] public DateTime CreatedAtUtc { get; set; }
     [BsonElement("updatedAtUtc")] public DateTime UpdatedAtUtc { get; set; }

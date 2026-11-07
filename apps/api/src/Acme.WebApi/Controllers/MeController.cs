@@ -5,6 +5,7 @@ using Acme.Application.Common;
 using Acme.Application.Profile;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Acme.WebApi.Auditing;
 
 namespace Acme.WebApi.Controllers;
 
@@ -25,7 +26,7 @@ public sealed class MeController(
         var user = await users.FindByIdAsync(sub, ct);
         if (user is null) return NotFound();
 
-        return Ok(new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.Profile.OnboardingCompleted, user.CreatedAtUtc));
+        return Ok(new UserProfile(user.Id, user.Email.Value, user.DisplayName, user.Tier, user.Profile.OnboardingCompleted, user.CreatedAtUtc, user.Role));
     }
 
     [HttpGet("full")]
@@ -44,6 +45,7 @@ public sealed class MeController(
         };
     }
 
+    [Audit("profile.update", "user")]
     [HttpPut("profile")]
     [ProducesResponseType(typeof(MeDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -64,6 +66,7 @@ public sealed class MeController(
         };
     }
 
+    [Audit("profile.onboard", "user")]
     [HttpPost("onboard")]
     [ProducesResponseType(typeof(MeDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Onboard(

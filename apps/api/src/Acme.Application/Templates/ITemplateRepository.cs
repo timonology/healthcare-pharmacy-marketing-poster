@@ -1,3 +1,4 @@
+using Acme.Application.Common;
 using Acme.Domain.Templates;
 
 namespace Acme.Application.Templates;
@@ -7,7 +8,9 @@ public sealed record TemplateQuery(
     string? Search = null,
     bool? IsPublished = true,
     int Skip = 0,
-    int Take = 50);
+    int Take = 50,
+    /// <summary>Sort and range on <c>CreatedAtUtc</c>. Null: newest first, all time.</summary>
+    ListWindow? Window = null);
 
 public interface ITemplateRepository
 {

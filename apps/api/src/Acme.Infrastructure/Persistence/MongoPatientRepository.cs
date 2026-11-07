@@ -1,3 +1,4 @@
+using Acme.Application.Common;
 using Acme.Application.Patients;
 using Acme.Domain.Patients;
 using MongoDB.Driver;
@@ -24,13 +25,21 @@ public sealed class MongoPatientRepository(MongoContext ctx) : IPatientRepositor
                 fb.Regex(x => x.Phone, regex),
                 fb.Regex(x => x.Notes, regex));
         }
+        if (q.Window is { HasRange: true } w)
+            filter &= ListWindowMongo.Range<PatientDocument>(x => x.CreatedAtUtc, w);
         return filter;
     }
 
     public async Task<IReadOnlyList<Patient>> ListAsync(PatientQuery query, CancellationToken ct)
     {
+        // No window — imports, admin support views, recipient pickers — keeps
+        // the alphabetical order those callers were built on. The Patients page
+        // always sends one, and gets date added, newest first by default.
+        var sort = query.Window is { } w
+            ? ListWindowMongo.Sort<PatientDocument>(x => x.CreatedAtUtc, x => x.Id, w)
+            : Builders<PatientDocument>.Sort.Ascending(x => x.FullName);
         var docs = await Col.Find(BuildFilter(query))
-            .SortBy(x => x.FullName)
+            .Sort(sort)
             .Skip(query.Skip)
             .Limit(query.Take)
             .ToListAsync(ct);
@@ -68,6 +77,76 @@ public sealed class MongoPatientRepository(MongoContext ctx) : IPatientRepositor
         var docs = await Col.Find(filter).ToListAsync(ct);
         return docs.Select(PatientMapper.Hydrate).ToList();
     }
+
+    /// <summary>
+    /// Member counts per group for one pharmacy, in a single aggregation.
+    /// </summary>
+    /// <remarks>
+    /// Untyped pipeline for the same reason the analytics ones are: $unwind on
+    /// an array field has no clean typed equivalent, and pushing it through the
+    /// driver's expression translator is the kind of code that compiles and
+    /// then throws on a version bump.
+    ///
+    /// The $match comes first so the unwind only ever touches one pharmacy's
+    /// documents — reversing them would fan out the whole collection before
+    /// filtering.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<string, int>> CountsByGroupAsync(
+        string ownerId, CancellationToken ct)
+    {
+        var collection = ctx.Collection<MongoDB.Bson.BsonDocument>("patients");
+
+        var pipeline = PipelineDefinition<MongoDB.Bson.BsonDocument, MongoDB.Bson.BsonDocument>.Create(
+            new MongoDB.Bson.BsonDocument("$match", new MongoDB.Bson.BsonDocument
+            {
+                { "ownerId", ownerId },
+                { "groupIds", new MongoDB.Bson.BsonDocument("$exists", true) },
+            }),
+            new MongoDB.Bson.BsonDocument("$unwind", "$groupIds"),
+            new MongoDB.Bson.BsonDocument("$group", new MongoDB.Bson.BsonDocument
+            {
+                { "_id", "$groupIds" },
+                { "count", new MongoDB.Bson.BsonDocument("$sum", 1) },
+            }));
+
+        var rows = await collection
+            .Aggregate<MongoDB.Bson.BsonDocument>(pipeline, cancellationToken: ct)
+            .ToListAsync(ct);
+
+        var result = new Dictionary<string, int>();
+        foreach (var row in rows)
+        {
+            var id = row["_id"];
+            if (id.IsBsonNull) continue;
+            result[id.AsString] = row["count"].ToInt32();
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Pulls a group id out of every patient that references it, platform-wide.
+    /// </summary>
+    /// <remarks>
+    /// One $pull across the collection rather than loading and rewriting each
+    /// patient. A global group may be referenced by hundreds of pharmacies'
+    /// patients, and the read-modify-write loop the private path uses would be
+    /// both slow and lossy if it failed halfway.
+    /// </remarks>
+    public async Task<long> RemoveGroupFromAllPatientsAsync(string groupId, CancellationToken ct)
+    {
+        var result = await Col.UpdateManyAsync(
+            Builders<PatientDocument>.Filter.AnyEq(x => x.GroupIds, groupId),
+            Builders<PatientDocument>.Update.Pull(x => x.GroupIds, groupId),
+            cancellationToken: ct);
+
+        return result.ModifiedCount;
+    }
+
+    public Task<long> CountInGroupAcrossPlatformAsync(string groupId, CancellationToken ct) =>
+        Col.CountDocumentsAsync(
+            Builders<PatientDocument>.Filter.AnyEq(x => x.GroupIds, groupId),
+            cancellationToken: ct);
 
     public Task AddAsync(Patient patient, CancellationToken ct) =>
         Col.InsertOneAsync(PatientMapper.ToDocument(patient), cancellationToken: ct);

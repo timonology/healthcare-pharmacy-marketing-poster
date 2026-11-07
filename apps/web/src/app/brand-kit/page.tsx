@@ -112,12 +112,34 @@ export default function BrandKitPage() {
     }
   }
 
+  /**
+   * Uploads a logo, creating the brand kit first if there isn't one yet.
+   *
+   * The server refuses a logo for an owner with no brand kit, because a kit
+   * carries the pharmacy name and licence number that end up on printed,
+   * patient-facing material — it will not invent those. That constraint is
+   * right, but making the person satisfy it by hand was not: the file input
+   * sat disabled behind "save the brand kit once before uploading a logo",
+   * which is the page explaining its own storage model.
+   *
+   * Nothing was actually missing. The form is prefilled from the pharmacy
+   * profile on load, so the values the kit needs are already on screen. Saving
+   * them is a step the page can take by itself.
+   *
+   * If the form genuinely is incomplete the save fails, and the error names the
+   * field — "Pharmacy name is required" — instead of the old message, which
+   * named neither the problem nor the fix. (The licence number used to be the
+   * example here. It is optional now: kits created by the booking-link
+   * migration have none, and demanding one would lock those pharmacies out of
+   * the page they were sent to.)
+   */
   async function onUploadLogo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setPending(true);
     setError(null);
     try {
+      if (!savedAt) populate(await api.upsertBrandKit(form));
       const kit = await api.uploadLogo(file);
       populate(kit);
     } catch (err) {
@@ -163,13 +185,13 @@ export default function BrandKitPage() {
                 accept="image/png,image/jpeg,image/svg+xml,image/webp"
                 onChange={onUploadLogo}
                 className="text-sm"
-                disabled={pending || !savedAt}
+                disabled={pending}
               />
-              {!savedAt && (
-                <p className="text-xs text-muted-foreground">
-                  Save the brand kit once before uploading a logo.
-                </p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                PNG, JPEG, SVG or WebP. Applied to posters, campaign emails and
+                video overlays.
+                {!savedAt && " Choosing one saves the details below at the same time."}
+              </p>
             </div>
           </div>
         </section>
@@ -258,8 +280,16 @@ export default function BrandKitPage() {
                     },
                   })
                 }
-                required
               />
+              {/* Not `required`. The API stopped demanding one when the booking
+                  link moved here: pharmacies that had a link and no brand kit
+                  had a kit created for them, and there was no honest
+                  registration number to put in it. Requiring it in the browser
+                  would lock exactly those pharmacies out of saving the page
+                  they have just been sent to. */}
+              <p className="text-xs text-muted-foreground">
+                Printed in the footer of posters that carry one.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="phPhone">Phone</Label>
@@ -286,6 +316,40 @@ export default function BrandKitPage() {
                   })
                 }
               />
+            </div>
+
+            {/*
+              The booking link lives here, not on the profile. This is what the
+              booking QR encodes and what {{booking_url}} resolves to, and both
+              of those are laid out from the brand kit — so this is where a
+              designer looks for it.
+
+              `?? ""` because the field is optional in the request: a controlled
+              input handed undefined becomes uncontrolled, and React swaps it
+              silently on the first keystroke.
+            */}
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="phBooking">Booking link</Label>
+              <Input
+                id="phBooking"
+                type="url"
+                inputMode="url"
+                placeholder="https://booking.yourpharmacy.co.uk"
+                value={form.pharmacy.bookingUrl ?? ""}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    pharmacy: { ...form.pharmacy, bookingUrl: e.target.value },
+                  })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Where patients book an appointment. Put{" "}
+                <code className="rounded bg-muted px-1 py-0.5">{"{{booking_url}}"}</code>{" "}
+                on a poster and it fills in from here, and it is what the booking
+                QR code points at. Change it and every poster you have already
+                made points at the new one.
+              </p>
             </div>
           </div>
         </section>

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Layer, Rect, Stage, Text as KonvaText, Transformer } from "react-konva";
+import { Layer, Line, Rect, Stage, Text as KonvaText, Transformer } from "react-konva";
 import type Konva from "konva";
-import type { Shape } from "@acme/shared-types";
+import { foldGuides, type Shape } from "@acme/shared-types";
 import { ShapeNode } from "@/components/editor/shapes/ShapeNode";
 import {
   makeCircle,
@@ -56,7 +56,11 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
     const stage = stageRef.current;
     if (!tr || !stage) return;
     if (selectedId) {
-      const node = stage.findOne(`#${selectedId}`);
+      // Traverse the tree instead of stage.findOne('#id'), which resolves via
+      // Konva's process-global id registry — see the note on TextEditor. A miss
+      // there silently detaches the Transformer, so the layer looks selected in
+      // the layers panel but shows no handles and cannot be resized.
+      const node = stage.find((n: Konva.Node) => n.id() === selectedId)[0];
       tr.nodes(node ? [node] : []);
     } else {
       tr.nodes([]);
@@ -197,6 +201,30 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
             listening
           />
 
+          {/*
+            Fold guides. Drawn from the document's own foldPanels, above the
+            page and below the artwork, and deliberately `listening={false}` so
+            they cannot be clicked, selected or dragged.
+
+            They exist only here. The exporter renders from the canvas JSON and
+            knows nothing about them, which is what keeps a guide off the
+            printed sheet — a fold line that prints is a ruined print run.
+
+            Stroke and dash are divided by the zoom so a guide stays a hairline
+            at any magnification instead of becoming a stripe when zoomed out.
+          */}
+          {foldGuides(doc.width, doc.foldPanels ?? 1).map((x) => (
+            <Line
+              key={`fold-${x}`}
+              points={[x, 0, x, doc.height]}
+              stroke="#0ea5e9"
+              strokeWidth={1 / stageScale}
+              dash={[8 / stageScale, 8 / stageScale]}
+              opacity={0.7}
+              listening={false}
+            />
+          ))}
+
           {sortedShapes.map((shape) => (
             <ShapeNode
               key={shape.id}
@@ -221,7 +249,7 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
             <KonvaText
               x={doc.width - 320}
               y={doc.height - 40}
-              text="Made with Sonar Marketing25 · pharmacyposter.app"
+              text="Made with Marketing25"
               fontSize={16}
               fontFamily="Inter, sans-serif"
               fill="rgba(15, 23, 42, 0.55)"
@@ -249,9 +277,9 @@ export function EditorCanvas({ width, height }: EditorCanvasProps) {
       {/* HTML overlay for inline text editing. */}
       {editingTextId && (
         <TextEditor
+          key={editingTextId}
           shapeId={editingTextId}
           onClose={() => setEditingTextId(null)}
-          stageRef={stageRef}
           stageScale={stageScale}
           stagePos={stagePos}
         />
@@ -284,47 +312,94 @@ function ZoomBadge({ scale, onReset }: { scale: number; onReset: () => void }) {
 interface TextEditorProps {
   shapeId: string;
   onClose: () => void;
-  stageRef: React.RefObject<Konva.Stage>;
   stageScale: number;
   stagePos: { x: number; y: number };
 }
 
-function TextEditor({ shapeId, onClose, stageRef, stageScale, stagePos }: TextEditorProps) {
+/**
+ * Inline text editing overlay.
+ *
+ * Position is derived from the shape's own document coordinates and the stage
+ * transform, NOT from `stage.findOne('#id')`.
+ *
+ * `findOne` resolves through Konva's PROCESS-GLOBAL id registry (`Konva._ids`),
+ * which has two failure modes that both end in a silent `return null` — i.e.
+ * double-click appears to do nothing, on some layers but not others:
+ *
+ *  1. Ids must be unique across every Konva stage on the page. Our seeded
+ *     templates reuse generic ids ("headline-1", "footer", "cta-bar" — "footer"
+ *     appears in all 24), so any second stage mounting the same id wins the
+ *     registry and the lookup fails the ancestry check.
+ *  2. React StrictMode double-mounts in dev. The throwaway mount's unregister
+ *     deletes the id the surviving mount registered, so the node is simply
+ *     absent from the registry.
+ *
+ * screen = stagePos + docPos * stageScale is exact, has no global state, and is
+ * what the (previously unused) `stagePos` prop was passed in for.
+ */
+function TextEditor({ shapeId, onClose, stageScale, stagePos }: TextEditorProps) {
   const shape = useEditorStore((s) => s.doc.shapes.find((sh) => sh.id === shapeId));
   const updateShapeLive = useEditorStore((s) => s.updateShapeLive);
   const commitHistory = useEditorStore((s) => s.commitHistory);
 
-  if (!shape || shape.kind !== "text" || !stageRef.current) return null;
+  if (!shape || shape.kind !== "text") return null;
 
-  const stage = stageRef.current;
-  const node = stage.findOne(`#${shapeId}`);
-  if (!node) return null;
-  const absPos = node.getAbsolutePosition();
+  // Konva applies scale about the node origin, and Text's origin is its
+  // top-left, so the same origin works for the CSS transform below.
+  const scaleX = shape.scale?.x ?? 1;
+  const scaleY = shape.scale?.y ?? 1;
+
+  const left = stagePos.x + shape.position.x * stageScale;
+  const top = stagePos.y + shape.position.y * stageScale;
+  const fontSize = shape.fontSize * scaleY * stageScale;
+
+  const commit = (value: string) => {
+    updateShapeLive(shapeId, { text: value });
+    commitHistory();
+    onClose();
+  };
 
   return (
     <textarea
       autoFocus
       defaultValue={shape.text}
-      onBlur={(e) => {
-        updateShapeLive(shapeId, { text: e.currentTarget.value });
-        commitHistory();
-        onClose();
-      }}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={(e) => commit(e.currentTarget.value)}
       onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
+        // Escape reverts; the store was never touched, so just close.
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onClose();
+          return;
+        }
+        // Enter commits. Shift+Enter inserts a newline, matching every other
+        // design tool — posters legitimately need multi-line headlines.
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          commit(e.currentTarget.value);
+        }
       }}
       style={{
         position: "absolute",
-        top: absPos.y,
-        left: absPos.x,
-        width: (shape.width ?? 320) * stageScale,
-        fontSize: shape.fontSize * stageScale,
+        top,
+        left,
+        width: (shape.width ?? 320) * scaleX * stageScale,
+        // Headlines run to 118px; a default 2-row box hid most of the text and
+        // made the field look broken. Track the real line height instead.
+        minHeight: fontSize * 1.4,
+        height: "auto",
+        fontSize,
+        lineHeight: 1.2,
         fontFamily: shape.fontFamily,
+        textAlign: shape.align ?? "left",
         color: shape.fill,
-        background: "rgba(255,255,255,0.95)",
+        background: "rgba(255,255,255,0.97)",
         border: "1px solid #2563eb",
+        borderRadius: 2,
         outline: "none",
-        padding: "2px 4px",
+        padding: 0,
+        margin: 0,
+        overflow: "hidden",
         resize: "none",
         transform: `rotate(${shape.rotation}deg)`,
         transformOrigin: "top left",

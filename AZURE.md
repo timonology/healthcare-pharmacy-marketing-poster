@@ -12,23 +12,37 @@ The deployed shape:
 +----------------+        +---------------+        +-----------------+
 |  Browser       | -----> |  App Service  | -----> |  App Service    |
 |                |        |  acme-web     |        |  acme-api       |
-+----------------+        |  (Next.js)    |        |  (.NET 8)       |
++----------------+        |  (Next.js)    |        |  (.NET 10)      |
                           +-------+-------+        +--------+--------+
                                   |                         |
                                   |                +--------v--------+
-                                  |                |  Cosmos DB      |
-                                  |                |  (MongoDB API)  |
-                                  |                +-----------------+
-                                  |                         |
-                                  |                +--------v--------+
-                                  +--------------> |  Blob Storage   |
-                                                   |  canvas-assets  |
+                                  |                |  Cosmos DB      |<-----+
+                                  |                |  (MongoDB API)  |      |
+                                  |                +-----------------+      |
+                                  |                         |               |
+                                  |                +--------v--------+      |
+                                  +--------------> |  Blob Storage   |<-----+
+                                                   |  canvas-assets  |      |
+                                                   +-----------------+      |
+                                                                            |
+                                                   +-----------------+      |
+                                                   |  App Service    |------+
+                                                   |  acme-ai        |
+                                                   |  (Python + ffmpeg)
+                                                   |  video worker   |
                                                    +-----------------+
 ```
 
-Two containerised App Services share one Linux App Service plan. The web app
-talks to the API server-side using Azure's private DNS, and the browser only
-ever speaks to the web app.
+Three containerised App Services share one Linux App Service plan:
+
+- **acme-web** (Next.js) — the only thing the browser speaks to.
+- **acme-api** (.NET 10) — REST API, owns the Video entity, tier gating, blob
+  URL signing. Writes new video jobs to Mongo.
+- **acme-ai** (Python + FastAPI + ffmpeg + MoviePy) — hosts the LangGraph
+  video agent. Polls the same Mongo `videos` collection every ~4s,
+  renders through 5 stages (research → script → voice → visuals → editor),
+  uploads MP4 + thumbnail to the same Blob container the API reads from.
+  Never touched by the browser directly.
 
 ---
 
@@ -86,6 +100,15 @@ Take note of the outputs at the end — you'll see `apiHostname`, `webHostname`,
 > prefix or App Service SKU (`B1` is fine for development; bump to `P1v3` for
 > production traffic).
 
+> **Bicep replaces every app setting on each deploy.** Anything set by hand in
+> the portal is removed. Pass secrets as parameters every time, including the
+> social ones: `socialEncryptionKey`, `metaAppId`/`metaAppSecret`,
+> `googleClientId`/`googleClientSecret`/`googleAdsDeveloperToken`,
+> `linkedInClientId`/`linkedInClientSecret`/`linkedInPagesEnabled`,
+> `tikTokClientKey`/`tikTokClientSecret`, `xClientId`/`xClientSecret`, plus
+> `readinessToken` and `clientIpSigningKey`. The full list and what each does
+> is in `docs/PRODUCTION_CHECKLIST.md`; platform setup in `docs/SOCIAL_SETUP.md`.
+
 If you'd rather click through the portal instead of using Bicep, the equivalent
 manual steps are at the end of this document.
 
@@ -100,26 +123,40 @@ directly with the CLI.
 ACR=pharmposteracr       # matches namePrefix + "acr" from Bicep
 az acr login -n $ACR
 
-# .NET 8 API
+# .NET 10 API
 docker build -t $ACR.azurecr.io/acme-api:latest ./apps/api
 docker push  $ACR.azurecr.io/acme-api:latest
 
 # Next.js web (the Docker context is the monorepo root)
 docker build -f apps/web/Dockerfile -t $ACR.azurecr.io/acme-web:latest .
 docker push  $ACR.azurecr.io/acme-web:latest
+
+# Python ai-service (ffmpeg + moviepy + edge-tts + langgraph — this
+# image is ~1.5-2 GB. First build takes ~5-10 min; subsequent builds
+# reuse the base + apt layer.)
+docker build -f apps/ai-service/Dockerfile -t $ACR.azurecr.io/acme-ai:latest ./apps/ai-service
+docker push  $ACR.azurecr.io/acme-ai:latest
 ```
 
 > **Alt:** Use `az acr build` to skip the local Docker step:
 > ```bash
 > az acr build -r $ACR -t acme-api:latest ./apps/api
 > az acr build -r $ACR -t acme-web:latest -f apps/web/Dockerfile .
+> az acr build -r $ACR -t acme-ai:latest  ./apps/ai-service
 > ```
+
+> **Or use `scripts/deploy.sh`** — the repo ships a wrapper that builds all
+> three images with a `:dev` moving tag and a `:<sha>` immutable tag, pushes
+> to Docker Hub, and (with `--pin` or `--bump`) points the App Services at
+> the new images. See `--help` for options; `SKIP_AI=1` lets you skip the
+> heavy ai-service build when you only touched the .NET or web code.
 
 After the first push, restart the App Services so they pull the new images:
 
 ```bash
 az webapp restart -g $RG -n pharmposter-api
 az webapp restart -g $RG -n pharmposter-web
+az webapp restart -g $RG -n pharmposter-ai
 ```
 
 ---
@@ -204,9 +241,55 @@ These are pre-populated by the Bicep template. Change them in
 | `NEXT_PUBLIC_API_URL` | `https://pharmposter-api.azurewebsites.net` |
 | `API_INTERNAL_URL` | `https://pharmposter-api.azurewebsites.net` |
 
-Sensitive values (`Jwt__Secret`, Storage keys, SMTP credentials) should
-ideally be sourced from **Azure Key Vault references** instead of being
-stored inline — `@Microsoft.KeyVault(SecretUri=https://your-kv.vault.azure.net/secrets/jwt-secret/)`.
+### `pharmposter-ai`
+
+The Python video-agent service. Boots FastAPI + starts an async worker that
+polls Mongo for `Pending` videos and runs the 5-stage LangGraph pipeline.
+
+**Image source:** the Bicep template provisions this App Service pointed at
+`infosonarinformatics/sonar-marketing-ai:dev` on Docker Hub (matches what
+`deploy.sh` builds and pushes). If your Docker Hub repo is **private**,
+pass `dockerHubUsername=...` and `dockerHubPassword=...` at `az deployment
+group create` time so App Service can authenticate. If it's public, leave
+both blank.
+
+| Key | Value |
+|-----|-------|
+| `WEBSITES_PORT` | `8000` |
+| `Mongo__ConnectionString` | (same value as the API) |
+| `Mongo__Database` | `acme` |
+| `AzureBlob__ConnectionString` | (same value as the API) |
+| `AzureBlob__Container` | `canvas-assets` |
+| `ANTHROPIC_API_KEY` | Claude — required for script generation |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` (default) |
+| `TAVILY_API_KEY` | Web-search — required for the research node |
+| `PEXELS_API_KEY` | Stock B-roll — required for the visuals node |
+| `ELEVENLABS_API_KEY` | **Required.** Blank means Edge-TTS, which Microsoft does not serve to datacentres — every render dies at the voice stage. No fallback: see docs/AI_SETUP.md |
+| `ELEVENLABS_DEFAULT_VOICE_ID` | Optional; the account's Rachel voice if unset |
+| `REPLICATE_API_TOKEN` | Optional; blank disables AI imagery (Pro-only) |
+| `REPLICATE_FLUX_MODEL` | `black-forest-labs/flux-schnell` (default) |
+| `AI_IMAGERY_MAX_IMAGES_PER_JOB` | `8` |
+| `AI_IMAGERY_BUDGET_PER_JOB_USD` | `0.05` |
+| `AI_IMAGERY_COST_PER_IMAGE_USD` | `0.003` |
+| `VIDEO_WORKER_ENABLED` | `true` |
+| `VIDEO_WORKER_POLL_SECONDS` | `4` |
+
+The Bicep template also sets `alwaysOn=true` on this app because the video
+worker is long-lived — without it, App Service would idle-park the container
+after 20 minutes and jobs would sit in `Pending` until the next incoming
+request.
+
+**Plan size warning:** the ai-service runs FFmpeg + MoviePy encodes and
+should not be on `B1` (1.75 GB RAM). Bump to `B2` (3.5 GB) or `P1v3`
+before running real workloads — B1 will OOM-kill the container mid-render
+on longer clips. You can either upgrade the shared plan or move just the
+ai-service to its own bigger plan.
+
+Sensitive values (`Jwt__Secret`, Storage keys, `ANTHROPIC_API_KEY`,
+`TAVILY_API_KEY`, `PEXELS_API_KEY`, `ELEVENLABS_API_KEY`,
+`REPLICATE_API_TOKEN`, SMTP credentials) should ideally be sourced from
+**Azure Key Vault references** instead of being stored inline —
+`@Microsoft.KeyVault(SecretUri=https://your-kv.vault.azure.net/secrets/anthropic-api-key/)`.
 
 ---
 

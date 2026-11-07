@@ -24,6 +24,11 @@ public sealed class BrandKitService(
         UpsertBrandKitRequest request,
         CancellationToken ct)
     {
+        // Loaded before validation, because building the new PharmacyDetails
+        // needs the booking link already on file to decide what "not supplied"
+        // means.
+        var existing = await repo.FindByOwnerAsync(ownerId, ct);
+
         BrandColors colors;
         PharmacyDetails pharmacy;
         try
@@ -36,11 +41,14 @@ public sealed class BrandKitService(
                 request.Pharmacy.Name,
                 request.Pharmacy.LicenseNumber,
                 request.Pharmacy.Phone,
-                request.Pharmacy.Address);
+                request.Pharmacy.Address,
+                // Absent leaves what is on file; an empty string clears. The
+                // caller has to be able to say "I am not touching this", or
+                // every client that predates the field silently deletes it.
+                request.Pharmacy.BookingUrl ?? existing?.Pharmacy.BookingUrl);
         }
         catch (DomainException ex) { return Result<BrandKitDto>.Invalid(ex.Message); }
 
-        var existing = await repo.FindByOwnerAsync(ownerId, ct);
         if (existing is null)
         {
             DomainBrandKit kit;
@@ -96,6 +104,49 @@ public sealed class BrandKitService(
         return Result<BrandKitDto>.Success(ToDto(kit));
     }
 
+    /// <summary>
+    /// The owner's logo bytes, for the stable route a canvas references.
+    /// </summary>
+    /// <returns>Null when they have no kit, or no logo, or the blob is gone.</returns>
+    public async Task<(Stream Content, string ContentType)?> OpenLogoAsync(
+        string ownerId, CancellationToken ct)
+    {
+        var kit = await repo.FindByOwnerAsync(ownerId, ct);
+        if (kit?.LogoBlobKey is not { } key) return null;
+
+        var stream = await assets.OpenLogoAsync(key, ct);
+        if (stream is null) return null;
+
+        return (stream, ContentTypeFor(key));
+    }
+
+    /// <summary>
+    /// The owner's logo blob key, for renderers that read storage directly.
+    /// </summary>
+    /// <remarks>
+    /// The PDF exporter cannot fetch the route: that would be the API calling
+    /// itself over a URL taken from a saved document, which inside a container
+    /// network often resolves to nothing. It rewrites the reference to this key
+    /// and reads the blob.
+    /// </remarks>
+    public async Task<string?> LogoBlobKeyAsync(string ownerId, CancellationToken ct) =>
+        (await repo.FindByOwnerAsync(ownerId, ct))?.LogoBlobKey;
+
+    private static string ContentTypeFor(string blobKey)
+    {
+        var ext = System.IO.Path.GetExtension(blobKey).TrimStart('.').ToLowerInvariant();
+        return ext switch
+        {
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "svg" => "image/svg+xml",
+            "webp" => "image/webp",
+            // Deliberately not application/octet-stream: that makes a browser
+            // download the logo instead of drawing it.
+            _ => "image/png",
+        };
+    }
+
     private BrandKitDto ToDto(DomainBrandKit kit)
     {
         var url = kit.LogoBlobKey is null
@@ -113,7 +164,8 @@ public sealed class BrandKitService(
                 kit.Pharmacy.Name,
                 kit.Pharmacy.LicenseNumber,
                 kit.Pharmacy.Phone,
-                kit.Pharmacy.Address),
+                kit.Pharmacy.Address,
+                kit.Pharmacy.BookingUrl),
             kit.RegulatoryFooter,
             kit.CreatedAtUtc,
             kit.UpdatedAtUtc);

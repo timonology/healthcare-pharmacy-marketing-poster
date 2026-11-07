@@ -8,11 +8,13 @@ public sealed record PosterSummaryDto(
     string OwnerId,
     string Name,
     string? SourceTemplateId,
+    /// <summary>
+    /// The card image: <c>/api/posters/{id}/card?v=…</c>, drawn by the PDF/PNG
+    /// renderer and served same-origin. Never a storage URL.
+    /// </summary>
     string? ThumbnailUrl,
     /// <summary>
-    /// Full canvas — used for inline SVG previews on the My Posters list.
-    /// For very large libraries, consider rendering thumbnails to blob storage
-    /// instead of returning the canvas on every list call.
+    /// Full canvas — drawn in the browser only when the card image cannot load.
     /// </summary>
     JsonElement Canvas,
     PosterStatus Status,

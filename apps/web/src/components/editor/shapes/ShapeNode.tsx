@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { Circle, Group, Image as KonvaImage, Line, Rect, Text } from "react-konva";
 import type Konva from "konva";
 import type { Shape } from "@acme/shared-types";
+import { lineFill } from "@/lib/canvas/line-fill";
+import { displayTokens } from "@/lib/canvas/display-tokens";
+import { useTokenValuesStore } from "@/store/token-values-store";
 
 interface ShapeNodeProps {
   shape: Shape;
@@ -25,6 +28,7 @@ export function ShapeNode({
   onDragEnd,
   onDoubleClick,
 }: ShapeNodeProps) {
+  const tokenValues = useTokenValuesStore((s) => s.values);
   const common = {
     id: shape.id,
     name: "shape",
@@ -76,6 +80,7 @@ export function ShapeNode({
           stroke={shape.stroke}
           strokeWidth={shape.strokeWidth}
           closed={shape.closed}
+          fill={lineFill(shape)}
           lineCap="round"
         />
       );
@@ -83,7 +88,9 @@ export function ShapeNode({
       return (
         <Text
           {...common}
-          text={shape.text}
+          // Drawn with the pharmacy's details, or blank — never "{{address}}".
+          // The stored text keeps the token; see display-tokens.ts.
+          text={displayTokens(shape.text, tokenValues)}
           fontSize={shape.fontSize}
           fontFamily={shape.fontFamily}
           fill={shape.fill}

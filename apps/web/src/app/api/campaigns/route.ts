@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import type { Campaign, CreateCampaignRequest } from "@acme/shared-types";
 import { apiFetch } from "@/lib/server/api-proxy";
+import { listQuery } from "@/lib/server/list-query";
 
-export async function GET() {
-  const r = await apiFetch<Campaign[]>("/api/campaigns", { auth: true });
+export async function GET(req: Request) {
+  const r = await apiFetch<Campaign[]>(`/api/campaigns${listQuery(req)}`, { auth: true });
   if (!r.ok || !r.data) {
     return NextResponse.json(
       { error: r.error ?? "Failed to load campaigns." },

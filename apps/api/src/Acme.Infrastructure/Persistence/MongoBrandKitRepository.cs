@@ -6,7 +6,18 @@ namespace Acme.Infrastructure.Persistence;
 
 public sealed class MongoBrandKitRepository : IBrandKitRepository
 {
-    private const string CollectionName = "brand_kits";
+    /// <summary>
+    /// The one spelling of this collection's name.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private because it was already written out by hand
+    /// in <see cref="MongoIndexInitializer"/> as well, and a third copy went
+    /// into a migration as "brandKits" — camel-cased, plausible, and a
+    /// different collection. Mongo creates a collection on first write, so that
+    /// migration would have reported success, written every kit somewhere
+    /// nothing reads, and cleared the source field it was moving from.
+    /// </remarks>
+    internal const string CollectionName = "brand_kits";
     private readonly IMongoCollection<BrandKitDocument> _collection;
 
     public MongoBrandKitRepository(MongoContext ctx)

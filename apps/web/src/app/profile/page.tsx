@@ -18,6 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import { useTokenValuesStore } from "@/store/token-values-store";
+import { tokenValuesFrom } from "@/lib/canvas/display-tokens";
 
 export default function ProfilePage() {
   const [me, setMe] = useState<Me | null>(null);
@@ -30,6 +32,11 @@ export default function ProfilePage() {
     contactPhone: "",
     sonarFCode: "",
   });
+  // Read straight off `me` rather than mirrored into `form`: it is not part of
+  // what this page submits, and a copy in form state would be a copy that can
+  // go stale against the brand kit.
+  const bookingUrl = me?.profile.bookingUrl ?? null;
+
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -66,6 +73,8 @@ export default function ProfilePage() {
     try {
       const next = await api.updateProfile(form);
       setMe(next);
+      // Posters already made with {{tokens}} show the new details at once.
+      useTokenValuesStore.getState().setValues(tokenValuesFrom(next.profile));
       setSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -103,7 +112,7 @@ export default function ProfilePage() {
         {me.profile.sonarFCode && (
           <Badge variant="secondary" className="gap-1.5">
             <ShieldCheck className="h-3 w-3" />
-            Sonar verified · {me.profile.sonarFCode}
+            ODS verified · {me.profile.sonarFCode}
           </Badge>
         )}
       </header>
@@ -212,6 +221,48 @@ export default function ProfilePage() {
                 onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
                 required
               />
+            </div>
+            {/*
+              Shown, not edited. The link is stored on the brand kit, because
+              that is what posters are laid out from and what the booking QR
+              encodes. It is repeated here because this is the page a pharmacist
+              opens to check their details, and a contact detail that is simply
+              absent from it reads as one they have not set.
+
+              One value, one place to change it — so this sends them there
+              rather than offering a second box that writes the same field.
+            */}
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Booking link</Label>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2">
+                {bookingUrl ? (
+                  <a
+                    href={bookingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1 truncate text-sm underline underline-offset-2"
+                  >
+                    {bookingUrl}
+                  </a>
+                ) : (
+                  <span className="min-w-0 flex-1 text-sm text-muted-foreground">
+                    Not set — patients have nowhere to book, and posters with a
+                    booking code will print without one.
+                  </span>
+                )}
+                <Link
+                  href="/brand-kit"
+                  className="shrink-0 text-sm font-medium text-primary underline underline-offset-2"
+                >
+                  {bookingUrl ? "Change in Brand Kit" : "Add one in Brand Kit"}
+                </Link>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Kept with your brand kit, alongside your logo and colours. Put{" "}
+                <code className="rounded bg-muted px-1 py-0.5">{"{{booking_url}}"}</code>{" "}
+                on a poster and it fills in from there — and it is what a QR code
+                on a poster or a window screen points at.
+              </p>
             </div>
           </CardContent>
         </Card>

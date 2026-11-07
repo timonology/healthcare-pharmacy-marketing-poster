@@ -1,0 +1,94 @@
+# Every suite and check on every push and pull request (security review R2-16).
+#
+# Mirrors `pnpm test` — the same commands, so a green build here means the same
+# as a green run on a laptop — plus three things people forget to run by hand:
+# a secret scan, and dependency audits for each ecosystem.
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The working tree, not the history: history still holds keys that were
+      # committed before the scan existed and have since been rotated. Scanning
+      # them on every run would fail forever without protecting anything.
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            dir /repo --config /repo/.gitleaks.toml --redact --no-banner
+
+  web:
+    name: Web — types, unit tests, checks, audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:web
+      - name: Dependency audit (high and critical)
+        # Reported, not yet blocking: Next.js 14 is end-of-life and carries
+        # known advisories until the upgrade in docs/UPGRADE_RUNBOOK_2026-10.md
+        # (security review R2-02). Remove continue-on-error once that ships, so
+        # a new advisory fails the build.
+        continue-on-error: true
+        run: pnpm audit --audit-level high --prod
+
+  api:
+    name: API — unit and integration tests, vulnerable packages
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: bash scripts/test.sh api
+      - run: bash scripts/test.sh api:integration
+        env:
+          MONGO_TEST_URL: mongodb://localhost:27017
+      - name: Vulnerable packages
+        working-directory: apps/api
+        run: |
+          dotnet restore --nologo
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+          ! grep -qE "has the following vulnerable packages" vulnerable.txt
+
+  ai:
+    name: ai-service — tests and audit
+    runs-on: ubuntu-latest
+    env:
+      # Test-only values; the service refuses to start without a secret.
+      JWT_SECRET: ci-only-test-secret-not-used-anywhere-else-0123456789
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: System packages the tests need
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-liberation fonts-dejavu-core
+      - run: bash scripts/test.sh ai
+      - name: Dependency audit
+        working-directory: apps/ai-service
+        run: |
+          uv export --frozen --no-hashes --extra dev > /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt --no-deps --disable-pip

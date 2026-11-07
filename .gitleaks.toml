@@ -1,0 +1,48 @@
+# Secret scanning (security review R2-01, R2-16).
+#
+# Runs in CI on every push and pull request (.github/workflows/ci.yml) and can
+# run locally before a commit:
+#   gitleaks dir . --config .gitleaks.toml
+#
+# The allow-list below is only for values that are public on purpose. Each entry
+# says why. Never add a real key here to make the scan pass — move the key out
+# of the file instead.
+
+title = "Marketing25 secret scan"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Values that are public by design"
+regexes = [
+  # Azurite's well-known development account key, published by Microsoft.
+  '''Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==''',
+  # Throwaway token-encryption key for local development only (see the note
+  # beside it in appsettings.Development.json). Production sets its own.
+  '''X4YhavlZGBOKw/bF3lBDZuPx24Dfnm9FMmRRZU2JC3I=''',
+]
+paths = [
+  # Test fixtures and example files hold made-up passwords and keys on purpose.
+  '''(^|/)tests?/''',
+  '''\.test\.tsx?$''',
+  '''Tests?\.cs$''',
+  '''\.example$''',
+  '''(^|/)scripts/smoke/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)(bin|obj)/''',
+  '''pnpm-lock\.yaml$''',
+  '''uv\.lock$''',
+  '''\.(png|jpe?g|webp|pdf|xlsx|mp4|woff2?)$''',
+]
+
+# Development credentials, by decision (security reviews SEC-03, R2-01). The
+# Meta, Google and Mailjet values in appsettings.Development.json are for local
+# testing only: production was rotated on 3 October 2026 and reads its own
+# from App Service settings. This file is loaded only when
+# ASPNETCORE_ENVIRONMENT=Development. Every other settings file — including
+# appsettings.json, which production also loads — is scanned in full.
+[[allowlists]]
+description = "Development-only credentials in appsettings.Development.json"
+paths = ['''apps/api/src/Acme\.WebApi/appsettings\.Development\.json$''']

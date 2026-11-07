@@ -18,7 +18,7 @@ import type {
   Me,
   PosterSummary,
 } from "@acme/shared-types";
-import { CanvasPreview } from "@/components/canvas/CanvasPreview";
+import { PosterCardImage } from "@/components/posters/PosterCardImage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,8 +32,11 @@ import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { isUnlimited } from "@acme/shared-types";
+import { usePharmacyTokenValues } from "@/store/token-values-store";
 
 export default function DashboardPage() {
+  // Draws any {{token}} in a poster thumbnail as the pharmacy's details, or blank.
+  const tokenValues = usePharmacyTokenValues();
   const [me, setMe] = useState<Me | null>(null);
   const [subscription, setSubscription] = useState<CurrentSubscription | null>(null);
   const [posters, setPosters] = useState<PosterSummary[]>([]);
@@ -51,12 +54,11 @@ export default function DashboardPage() {
           api.listCampaigns().catch(() => [] as Campaign[]),
         ]);
         if (cancelled) return;
-        // Middleware already gates this — only redirect if the API explicitly
-        // says onboarding is incomplete (avoids loops on stale/partial data).
-        if (m.profile.onboardingCompleted === false) {
-          window.location.assign("/onboarding");
-          return;
-        }
+        // Middleware is the SINGLE source of truth for onboarding routing.
+        // /api/me BFF re-syncs the onboarded cookie on every call, so the
+        // next protected navigation will pick up the correct value. If we
+        // did our own window.location.assign("/onboarding") here we'd risk
+        // a loop when the cookie and DB briefly disagree.
         setMe(m);
         setSubscription(s);
         setPosters(p.items);
@@ -96,7 +98,7 @@ export default function DashboardPage() {
           </h1>
           {me.profile.sonarFCode && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Sonar FCode <span className="font-mono">{me.profile.sonarFCode}</span>
+              ODS / F code <span className="font-mono">{me.profile.sonarFCode}</span>
             </p>
           )}
         </div>
@@ -178,9 +180,12 @@ export default function DashboardPage() {
                 href={`/posters/${p.id}`}
                 className="group overflow-hidden rounded-xl border border-border/60 bg-card transition-all hover:-translate-y-0.5 hover:shadow-lg"
               >
-                <div className="aspect-[1/1.414] w-full overflow-hidden bg-muted">
-                  <CanvasPreview doc={p.canvas} className="h-full w-full" />
-                </div>
+                <PosterCardImage
+                  src={p.thumbnailUrl}
+                  alt={p.name}
+                  canvas={p.canvas}
+                  tokenValues={tokenValues}
+                />
                 <div className="p-2.5">
                   <p className="truncate text-xs font-medium">{p.name}</p>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">

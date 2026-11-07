@@ -7,7 +7,6 @@ import {
   ChevronDown,
   LogOut,
   Menu,
-  Pill,
   Sparkles,
   UserCircle2,
   X,
@@ -21,12 +20,18 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useSubscriptionStore } from "@/store/subscription-store";
+import { LogoMark } from "@/components/brand/LogoMark";
 
-/** Pages where no header (or marketing-only header) should render. */
+/** Pages that always render the marketing (public) header regardless of
+ *  auth state. Everything else uses the AppHeader when signed in and the
+ *  MarketingHeader when not. */
 const MARKETING_PATTERNS: RegExp[] = [
   /^\/login\/?$/,
   /^\/register\/?$/,
   /^\/onboarding\/?$/,
+  /^\/pricing\/?$/,
+  /^\/terms\/?$/,
+  /^\/privacy\/?$/,
 ];
 /** Pages that already ship their own nav — don't render the global header. */
 const NO_HEADER_PATTERNS: RegExp[] = [
@@ -38,8 +43,11 @@ const NAV = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/templates", label: "Templates" },
   { href: "/posters", label: "My Posters" },
+  { href: "/videos", label: "Videos" },
   { href: "/patients", label: "Patients" },
+  { href: "/pharmacies", label: "Branches" },
   { href: "/campaigns", label: "Campaigns" },
+  { href: "/analytics", label: "Analytics" },
   { href: "/brand-kit", label: "Brand Kit" },
   { href: "/pricing", label: "Pricing" },
 ] as const;
@@ -113,13 +121,15 @@ export function SiteHeader({ initialSignedIn = false }: { initialSignedIn?: bool
 
 function MarketingHeader() {
   return (
-    <header className="sticky top-0 z-30 flex h-14 w-full items-center gap-4 border-b border-border/40 bg-background/80 px-4 backdrop-blur">
+    <header className="sticky top-[var(--banner-h,0px)] z-30 flex h-14 w-full items-center gap-4 border-b border-border/40 bg-background/80 px-4 backdrop-blur">
       <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground">
-          <Pill className="h-4 w-4" />
-        </span>
-        Sonar Marketing25
+        <LogoMark className="h-7 w-7" />
+        Marketing25
       </Link>
+      <nav className="ml-6 hidden items-center gap-4 text-sm text-muted-foreground sm:flex">
+        <Link href="/pricing" className="transition-colors hover:text-foreground">Pricing</Link>
+        <Link href="/templates" className="transition-colors hover:text-foreground">Templates</Link>
+      </nav>
       <div className="ml-auto flex items-center gap-2">
         <ThemeToggle />
         <Button asChild size="sm" variant="ghost">
@@ -158,13 +168,11 @@ function AppHeader({
   }
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-border/60 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/65">
+    <header className="sticky top-[var(--banner-h,0px)] z-30 w-full border-b border-border/60 bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/65">
       <div className="flex h-14 items-center gap-3 px-4 lg:px-6">
         <Link href="/dashboard" className="flex items-center gap-2 font-semibold tracking-tight">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-sm">
-            <Pill className="h-4 w-4" />
-          </span>
-          <span className="hidden sm:inline">Sonar Marketing25</span>
+          <LogoMark className="h-7 w-7" />
+          <span className="hidden sm:inline">Marketing25</span>
         </Link>
 
         <Separator orientation="vertical" className="hidden h-6 lg:block" />

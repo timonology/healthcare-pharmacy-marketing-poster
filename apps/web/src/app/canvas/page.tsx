@@ -26,7 +26,7 @@ export default function CanvasPage() {
   }, []);
 
   return (
-    <main className="flex h-screen flex-col">
+    <main className="flex h-app-screen flex-col">
       <CanvasToolbar />
       <div ref={containerRef} className="flex-1 overflow-hidden bg-muted">
         {size.width > 0 && (

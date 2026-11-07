@@ -4,6 +4,13 @@ import { apiFetch } from "@/lib/server/api-proxy";
 
 export async function GET() {
   const result = await apiFetch<BrandKit>("/api/brand-kit", { auth: true });
+
+  // No kit yet is the normal state of every new pharmacy, not an error: the
+  // page prefills from the profile instead. Answered as 204 so it is not a red
+  // "Failed to load resource" in the console of everybody who opens Brand Kit
+  // before saving it. The API keeps its 404; this is the browser's contract.
+  if (result.status === 404) return new NextResponse(null, { status: 204 });
+
   if (!result.ok) {
     return NextResponse.json(
       { error: result.error ?? "Failed to load brand kit." },

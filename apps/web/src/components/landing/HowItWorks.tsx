@@ -2,22 +2,22 @@ const STEPS = [
   {
     n: 1,
     title: "Set up your brand kit",
-    body: "Upload your logo, choose your colors, fill in your license details once. We'll apply them everywhere.",
+    body: "Add your logo, pharmacy name, phone, address and booking link once. Every poster picks them up.",
   },
   {
     n: 2,
-    title: "Pick a template",
-    body: "Browse vaccination, awareness, promotion, and seasonal templates curated for pharmacies.",
+    title: "Create",
+    body: "Pick a template made for UK pharmacies, describe a poster for AI to design, or turn a topic into a short video.",
   },
   {
     n: 3,
-    title: "Customize with AI",
-    body: "Edit text, swap images, or let the AI generate copy for you. Live auto-save keeps your work safe.",
+    title: "Make it yours",
+    body: "Change the words, swap the photo, move things around. Your work saves as you go.",
   },
   {
     n: 4,
-    title: "Print or share",
-    body: "Export to high-resolution PDF or PNG. Print in-store, post on social, or send by email.",
+    title: "Print, send and share",
+    body: "Print a PDF, email your patients, post to Facebook, Instagram, LinkedIn, X, YouTube and TikTok, or play it on the screen in your pharmacy.",
   },
 ];
 
@@ -30,7 +30,7 @@ export function HowItWorks() {
             How it works
           </span>
           <h2 className="mt-3 text-3xl font-bold tracking-tight md:text-4xl">
-            From blank canvas to printed poster in four steps
+            From idea to your patients in four steps
           </h2>
         </div>
 

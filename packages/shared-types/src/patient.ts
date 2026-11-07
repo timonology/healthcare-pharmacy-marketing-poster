@@ -8,6 +8,11 @@ export interface Patient {
   groupIds: string[];
   createdAtUtc: string;
   updatedAtUtc: string;
+  /** When agreement to marketing email was recorded (security review R2-06). */
+  marketingConsentAtUtc?: string | null;
+  marketingConsentSource?: string | null;
+  /** This address unsubscribed from this pharmacy's emails; campaigns leave it out. */
+  unsubscribed?: boolean;
 }
 
 export interface UpsertPatientRequest {
@@ -16,6 +21,8 @@ export interface UpsertPatientRequest {
   phone?: string | null;
   notes?: string;
   groupIds?: string[];
+  /** Omitted leaves consent as it is; true records it; false clears it. */
+  marketingConsent?: boolean;
 }
 
 export interface PatientListResponse {
@@ -46,4 +53,27 @@ export interface BulkAddToGroupRequest {
 
 export interface AddRemoveGroupRequest {
   groupId: string;
+}
+
+/** One row's outcome from a CSV import. */
+export interface PatientImportRow {
+  lineNumber: number;
+  /** "created" | "skipped" | "failed" */
+  outcome: string;
+  detail: string;
+  contact: string | null;
+}
+
+/**
+ * The report shown after importing a CSV.
+ *
+ * Every row that did not become a contact is listed. A bare count leaves
+ * somebody with a messy spreadsheet unable to fix anything.
+ */
+export interface PatientImportReport {
+  totalRows: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  rows: PatientImportRow[];
 }

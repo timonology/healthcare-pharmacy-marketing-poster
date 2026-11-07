@@ -19,8 +19,15 @@ internal static class BrandKitMapper
         Set(kit, nameof(DomainBrandKit.LogoBlobKey), d.LogoBlobKey);
         Set(kit, nameof(DomainBrandKit.Colors), BrandColors.Create(
             d.Colors.Primary, d.Colors.Secondary, d.Colors.Accent));
+        // TryNormalize, not Normalize. Reading a row must not throw on what is
+        // already in it: a link that predates the validator, or that a migration
+        // carried over from a profile, would otherwise take down every request
+        // that touches this pharmacy's brand kit — and the value is re-validated
+        // properly the next time somebody saves it. Create re-normalises, which
+        // is idempotent for anything TryNormalize returns.
         Set(kit, nameof(DomainBrandKit.Pharmacy), PharmacyDetails.Create(
-            d.Pharmacy.Name, d.Pharmacy.LicenseNumber, d.Pharmacy.Phone, d.Pharmacy.Address));
+            d.Pharmacy.Name, d.Pharmacy.LicenseNumber, d.Pharmacy.Phone, d.Pharmacy.Address,
+            BookingLink.TryNormalize(d.Pharmacy.BookingUrl)));
         Set(kit, nameof(DomainBrandKit.RegulatoryFooter), d.RegulatoryFooter);
         Set(kit, nameof(DomainBrandKit.CreatedAtUtc), d.CreatedAtUtc);
         Set(kit, nameof(DomainBrandKit.UpdatedAtUtc), d.UpdatedAtUtc);
@@ -45,6 +52,7 @@ internal static class BrandKitMapper
             LicenseNumber = kit.Pharmacy.LicenseNumber,
             Phone = kit.Pharmacy.Phone,
             Address = kit.Pharmacy.Address,
+            BookingUrl = kit.Pharmacy.BookingUrl,
         },
         RegulatoryFooter = kit.RegulatoryFooter,
         CreatedAtUtc = kit.CreatedAtUtc,

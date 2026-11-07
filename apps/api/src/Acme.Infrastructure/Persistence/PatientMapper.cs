@@ -23,6 +23,8 @@ internal static class PatientMapper
         Set(p, nameof(Patient.Phone), d.Phone);
         Set(p, nameof(Patient.Notes), d.Notes ?? string.Empty);
         Set(p, nameof(Patient.GroupIds), (IReadOnlyList<string>)(d.GroupIds ?? new()).ToList());
+        Set(p, nameof(Patient.MarketingConsentAtUtc), d.MarketingConsentAtUtc);
+        Set(p, nameof(Patient.MarketingConsentSource), d.MarketingConsentSource);
         Set(p, nameof(Patient.CreatedAtUtc), d.CreatedAtUtc);
         Set(p, nameof(Patient.UpdatedAtUtc), d.UpdatedAtUtc);
         return p;
@@ -37,6 +39,8 @@ internal static class PatientMapper
         Phone = p.Phone,
         Notes = p.Notes,
         GroupIds = p.GroupIds.ToList(),
+        MarketingConsentAtUtc = p.MarketingConsentAtUtc,
+        MarketingConsentSource = p.MarketingConsentSource,
         CreatedAtUtc = p.CreatedAtUtc,
         UpdatedAtUtc = p.UpdatedAtUtc,
     };
@@ -45,7 +49,8 @@ internal static class PatientMapper
     {
         var g = (PatientGroup)GroupCtor.Invoke(null);
         Set(g, nameof(PatientGroup.Id), d.Id);
-        Set(g, nameof(PatientGroup.OwnerId), d.OwnerId);
+        Set(g, nameof(PatientGroup.OwnerId), d.OwnerId ?? string.Empty);
+        Set(g, nameof(PatientGroup.Scope), (GroupScope)d.Scope);
         Set(g, nameof(PatientGroup.Name), d.Name);
         Set(g, nameof(PatientGroup.Description), d.Description ?? string.Empty);
         Set(g, nameof(PatientGroup.PatientCount), d.PatientCount);
@@ -58,6 +63,7 @@ internal static class PatientMapper
     {
         Id = g.Id,
         OwnerId = g.OwnerId,
+        Scope = (int)g.Scope,
         Name = g.Name,
         Description = g.Description,
         PatientCount = g.PatientCount,

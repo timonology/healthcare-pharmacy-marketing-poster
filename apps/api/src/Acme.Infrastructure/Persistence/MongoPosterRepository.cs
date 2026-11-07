@@ -1,6 +1,8 @@
+using Acme.Application.Common;
 using Acme.Application.Posters;
 using Acme.Domain.Posters;
 using MongoDB.Driver;
+using Acme.Domain.Subscriptions;
 
 namespace Acme.Infrastructure.Persistence;
 
@@ -15,11 +17,25 @@ public sealed class MongoPosterRepository : IPosterRepository
         _collection = ctx.Collection<PosterDocument>(CollectionName);
     }
 
+    public async Task<(long Total, long ThisMonth)> CountAllAsync(CancellationToken ct)
+    {
+        var monthStart = BillingMonth.StartUtc();
+
+        var total = _collection.CountDocumentsAsync(
+            Builders<PosterDocument>.Filter.Empty, cancellationToken: ct);
+        var thisMonth = _collection.CountDocumentsAsync(
+            Builders<PosterDocument>.Filter.Gte(x => x.CreatedAtUtc, monthStart),
+            cancellationToken: ct);
+
+        await Task.WhenAll(total, thisMonth);
+        return (total.Result, thisMonth.Result);
+    }
+
     public async Task<IReadOnlyList<Poster>> ListAsync(PosterQuery query, CancellationToken ct)
     {
         var docs = await _collection
             .Find(BuildFilter(query))
-            .SortByDescending(x => x.UpdatedAtUtc)
+            .Sort(ListWindowMongo.Sort<PosterDocument>(x => x.UpdatedAtUtc, x => x.Id, query.Window ?? ListWindow.Default))
             .Skip(query.Skip)
             .Limit(query.Take)
             .ToListAsync(ct);
@@ -33,6 +49,18 @@ public sealed class MongoPosterRepository : IPosterRepository
     {
         var doc = await _collection.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         return doc is null ? null : PosterMapper.Hydrate(doc);
+    }
+
+    public async Task<IReadOnlyList<Poster>> FindManyByIdsAsync(
+        string ownerId, IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0) return Array.Empty<Poster>();
+
+        var fb = Builders<PosterDocument>.Filter;
+        var filter = fb.Eq(x => x.OwnerId, ownerId) & fb.In(x => x.Id, ids);
+
+        var docs = await _collection.Find(filter).ToListAsync(ct);
+        return docs.Select(PosterMapper.Hydrate).ToList();
     }
 
     public Task AddAsync(Poster poster, CancellationToken ct) =>
@@ -57,6 +85,9 @@ public sealed class MongoPosterRepository : IPosterRepository
 
         if (!string.IsNullOrWhiteSpace(q.Search))
             filter &= b.Text(q.Search);
+
+        if (q.Window is { HasRange: true } w)
+            filter &= ListWindowMongo.Range<PosterDocument>(x => x.UpdatedAtUtc, w);
 
         return filter;
     }

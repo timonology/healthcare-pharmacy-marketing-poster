@@ -1,49 +1,38 @@
 import Link from "next/link";
 import { Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PLAN_HIGHLIGHTS, PLAN_PRICES_GBP } from "@acme/shared-types";
 import { cn } from "@/lib/utils";
 
+/**
+ * Prices and plan lines for the home page. The lines are the API's own
+ * (PLAN_HIGHLIGHTS mirrors PlanCopy in Plans.cs, checked by PlanCopyTests),
+ * so the teaser cannot promise what a plan does not include.
+ */
 const PLANS = [
   {
     tier: "Free",
-    price: "£0",
+    price: `£${PLAN_PRICES_GBP.Free}`,
     description: "Try the app, no credit card.",
-    features: [
-      "Up to 5 saved posters",
-      "3 AI generations / month",
-      "Basic templates",
-      "Watermark on exports",
-    ],
+    features: PLAN_HIGHLIGHTS.Free,
     cta: "Start free",
     href: "/register",
     featured: false,
   },
   {
     tier: "Starter",
-    price: "£7",
+    price: `£${PLAN_PRICES_GBP.Starter}`,
     description: "For small pharmacies and individuals.",
-    features: [
-      "Up to 30 saved posters",
-      "50 AI generations / month",
-      "All templates + custom uploads",
-      "No watermark",
-      "Email export",
-    ],
+    features: PLAN_HIGHLIGHTS.Starter,
     cta: "Choose Starter",
     href: "/register?plan=starter",
     featured: true,
   },
   {
     tier: "Pro",
-    price: "£25",
-    description: "For teams that need it all.",
-    features: [
-      "Unlimited posters",
-      "Unlimited AI generations",
-      "Priority AI responses",
-      "Team collaboration",
-      "Custom domain branding",
-    ],
+    price: `£${PLAN_PRICES_GBP.Pro}`,
+    description: "For pharmacies running campaigns, videos and screens.",
+    features: PLAN_HIGHLIGHTS.Pro,
     cta: "Choose Pro",
     href: "/register?plan=pro",
     featured: false,
@@ -127,7 +116,6 @@ export function PricingTeaser() {
         </div>
 
         <p className="mt-10 text-center text-xs text-muted-foreground">
-          Need a custom plan for a multi-branch group?{" "}
           <Link href="/pricing" className="font-medium text-primary hover:underline">
             See full pricing details →
           </Link>

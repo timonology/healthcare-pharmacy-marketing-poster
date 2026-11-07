@@ -11,15 +11,24 @@ public sealed class PatientService(
     IPatientRepository patients,
     IPatientGroupRepository groups,
     IUserRepository users,
-    ILogger<PatientService> logger)
+    ILogger<PatientService> logger,
+    IEmailSuppressionRepository suppressions)
 {
+    /// <summary>How consent is labelled when the pharmacy ticks the box itself.</summary>
+    public const string ConsentRecordedByPharmacy = "Recorded by the pharmacy";
+
     public async Task<Result<IReadOnlyList<PatientDto>>> ListAsync(PatientQuery query, CancellationToken ct)
     {
         var items = await patients.ListAsync(query, ct);
         logger.LogInformation(
             "Patient list for owner={OwnerId} returned {Count} (search='{Search}', groupId='{GroupId}')",
             query.OwnerId, items.Count, query.Search ?? "", query.GroupId ?? "");
-        return Result<IReadOnlyList<PatientDto>>.Success(items.Select(ToDto).ToList());
+        // One lookup for the page, not one per row (R2-06).
+        var emails = items.Where(p => p.Email is not null).Select(p => p.Email!).ToList();
+        var suppressed = await suppressions.FindSuppressedAsync(query.OwnerId, emails, ct);
+        return Result<IReadOnlyList<PatientDto>>.Success(items
+            .Select(p => ToDto(p, p.Email is not null && suppressed.Contains(p.Email)))
+            .ToList());
     }
 
     public Task<int> CountAsync(PatientQuery query, CancellationToken ct) =>
@@ -29,7 +38,7 @@ public sealed class PatientService(
     {
         var p = await patients.FindByIdAsync(id, ct);
         if (p is null || p.OwnerId != ownerId) return Result<PatientDto>.NotFound("Patient not found.");
-        return Result<PatientDto>.Success(ToDto(p));
+        return Result<PatientDto>.Success(await DtoAsync(p, ct));
     }
 
     public async Task<Result<PatientDto>> CreateAsync(
@@ -53,6 +62,8 @@ public sealed class PatientService(
                 request.Phone,
                 request.Notes,
                 request.GroupIds);
+            if (request.MarketingConsent is { } consent)
+                patient.RecordMarketingConsent(consent, ConsentRecordedByPharmacy);
         }
         catch (DomainException ex) { return Result<PatientDto>.Invalid(ex.Message); }
 
@@ -61,7 +72,7 @@ public sealed class PatientService(
             "Patient created id={PatientId} owner={OwnerId} name='{Name}'",
             patient.Id, patient.OwnerId, patient.FullName);
         await RefreshGroupCountsAsync(ownerId, patient.GroupIds, ct);
-        return Result<PatientDto>.Success(ToDto(patient));
+        return Result<PatientDto>.Success(await DtoAsync(patient, ct));
     }
 
     public async Task<Result<PatientDto>> UpdateAsync(
@@ -88,12 +99,14 @@ public sealed class PatientService(
                 request.Phone,
                 request.Notes);
             if (request.GroupIds is not null) patient.ReplaceGroups(request.GroupIds);
+            if (request.MarketingConsent is { } consent)
+                patient.RecordMarketingConsent(consent, ConsentRecordedByPharmacy);
         }
         catch (DomainException ex) { return Result<PatientDto>.Invalid(ex.Message); }
 
         await patients.UpdateAsync(patient, ct);
         await RefreshGroupCountsAsync(ownerId, previousGroups.Union(patient.GroupIds), ct);
-        return Result<PatientDto>.Success(ToDto(patient));
+        return Result<PatientDto>.Success(await DtoAsync(patient, ct));
     }
 
     public async Task<Result<bool>> DeleteAsync(string id, string ownerId, CancellationToken ct)
@@ -131,7 +144,7 @@ public sealed class PatientService(
             return Result<PatientDto>.NotFound("Patient not found.");
 
         var group = await groups.FindByIdAsync(groupId, ct);
-        if (group is null || group.OwnerId != ownerId)
+        if (group is null || !group.AllowsMembershipFrom(ownerId))
             return Result<PatientDto>.NotFound("Group not found.");
 
         try { patient.AddToGroup(groupId); }
@@ -139,7 +152,7 @@ public sealed class PatientService(
 
         await patients.UpdateAsync(patient, ct);
         await RefreshGroupCountsAsync(ownerId, new[] { groupId }, ct);
-        return Result<PatientDto>.Success(ToDto(patient));
+        return Result<PatientDto>.Success(await DtoAsync(patient, ct));
     }
 
     public async Task<Result<PatientDto>> RemoveFromGroupAsync(
@@ -155,7 +168,7 @@ public sealed class PatientService(
         patient.RemoveFromGroup(groupId);
         await patients.UpdateAsync(patient, ct);
         await RefreshGroupCountsAsync(ownerId, new[] { groupId }, ct);
-        return Result<PatientDto>.Success(ToDto(patient));
+        return Result<PatientDto>.Success(await DtoAsync(patient, ct));
     }
 
     public async Task<Result<int>> BulkAddToGroupAsync(
@@ -165,7 +178,7 @@ public sealed class PatientService(
         CancellationToken ct)
     {
         var group = await groups.FindByIdAsync(groupId, ct);
-        if (group is null || group.OwnerId != ownerId)
+        if (group is null || !group.AllowsMembershipFrom(ownerId))
             return Result<int>.NotFound("Group not found.");
 
         var affected = await patients.FindManyByIdsAsync(ownerId, patientIds, ct);
@@ -276,7 +289,10 @@ public sealed class PatientService(
         foreach (var id in groupIds.Distinct())
         {
             var group = await groups.FindByIdAsync(id, ct);
-            if (group is null || group.OwnerId != ownerId)
+
+            // AllowsMembershipFrom, not an ownership test — a global group is
+            // usable by every pharmacy even though none of them owns it.
+            if (group is null || !group.AllowsMembershipFrom(ownerId))
                 return Result<PatientDto>.Invalid($"Group {id} not found.");
         }
         return null;
@@ -287,7 +303,7 @@ public sealed class PatientService(
         foreach (var id in groupIds)
         {
             var group = await groups.FindByIdAsync(id, ct);
-            if (group is null || group.OwnerId != ownerId)
+            if (group is null || !group.AllowsMembershipFrom(ownerId))
                 return $"Group {id} not found.";
         }
         return null;
@@ -299,13 +315,24 @@ public sealed class PatientService(
         {
             var group = await groups.FindByIdAsync(groupId, ct);
             if (group is null || group.OwnerId != ownerId) continue;
+
+            // Global groups deliberately skipped. Their stored counter is
+            // meaningless — each pharmacy has a different number of members —
+            // and writing this pharmacy's figure onto a shared group would
+            // show it to every other pharmacy. The per-pharmacy count is
+            // computed on read instead.
+            if (group.IsGlobal) continue;
+
             var members = await patients.ListByGroupAsync(ownerId, groupId, ct);
             group.SetPatientCount(members.Count);
             await groups.UpdateAsync(group, ct);
         }
     }
 
-    private static PatientDto ToDto(Patient p) => new(
+    private async Task<PatientDto> DtoAsync(Patient p, CancellationToken ct) =>
+        ToDto(p, p.Email is not null && await suppressions.IsSuppressedAsync(p.OwnerId, p.Email, ct));
+
+    private static PatientDto ToDto(Patient p, bool unsubscribed) => new(
         p.Id,
         p.OwnerId,
         p.FullName,
@@ -314,5 +341,8 @@ public sealed class PatientService(
         p.Notes,
         p.GroupIds,
         p.CreatedAtUtc,
-        p.UpdatedAtUtc);
+        p.UpdatedAtUtc,
+        p.MarketingConsentAtUtc,
+        p.MarketingConsentSource,
+        unsubscribed);
 }

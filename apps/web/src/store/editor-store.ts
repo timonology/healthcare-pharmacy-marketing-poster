@@ -6,6 +6,8 @@ import {
   type CanvasDocument,
   type Shape,
   type ShapeId,
+  type FoldPanels,
+  type PrintFormat,
 } from "@acme/shared-types";
 
 export type EditorTool =
@@ -35,6 +37,15 @@ interface EditorState {
 
   loadDocument: (doc: CanvasDocument) => void;
   loadPoster: (input: { id: string; name: string; canvas: CanvasDocument }) => void;
+
+  /**
+   * Loads a document that belongs to no poster — a template being composed, or
+   * a duplicate on its way to being one.
+   *
+   * Clears `posterId`, so autosave stays switched off and the caller owns
+   * saving. See the implementation for what goes wrong without it.
+   */
+  loadDetached: (input: { name: string; canvas: CanvasDocument }) => void;
   resetEmpty: (ownerId: string) => void;
 
   setPosterName: (name: string) => void;
@@ -48,6 +59,20 @@ interface EditorState {
   duplicateShape: (id: ShapeId) => void;
   updateShape: (id: ShapeId, patch: Partial<Shape>) => void;
   setBackground: (color: string) => void;
+  /**
+   * Resize the page. `scaleContent` (default true) scales every shape by the
+   * same factor so the design survives the change — without it an A4 layout
+   * clings to the top-left corner of an A3 sheet.
+   */
+  setPageSize: (width: number, height: number, scaleContent?: boolean) => void;
+  /**
+   * What this artwork is, and how many panels it folds into.
+   *
+   * Separate from the page size on purpose: a trifold leaflet is A4 landscape,
+   * so the dimensions cannot say whether folds are wanted. Changing the format
+   * does not resize the canvas — that stays the designer's choice.
+   */
+  setFormat: (format: PrintFormat, foldPanels?: FoldPanels) => void;
   rename: (name: string) => void;
 
   updateShapeLive: (id: ShapeId, patch: Partial<Shape>) => void;
@@ -88,6 +113,32 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   loadPoster: ({ id, name, canvas }) =>
     set({
       posterId: id,
+      posterName: name,
+      doc: canvas,
+      selectedId: null,
+      past: [],
+      future: [],
+      saveStatus: "saved",
+      lastSavedAtUtc: canvas.updatedAtUtc,
+    }),
+
+  loadDetached: ({ name, canvas }) =>
+    set({
+      // The whole point of this action: no poster behind the document.
+      //
+      // `replaceDoc` leaves `posterId` alone and marks the store dirty, which
+      // is correct when you are editing the poster that is already loaded. Hand
+      // it a *different* document — a template being composed, a duplicate —
+      // while a poster id is still in the store from earlier in the session,
+      // and `useAutoSave` will write the new document over that poster 1.5
+      // seconds later. The pharmacy's poster is silently replaced by something
+      // it has nothing to do with.
+      //
+      // That could not happen while the only destination was /canvas, which
+      // mounts no autosave. It became possible the moment the real editor was
+      // opened on an unsaved design, so the detaching is explicit here rather
+      // than remembered at each call site.
+      posterId: null,
       posterName: name,
       doc: canvas,
       selectedId: null,
@@ -157,6 +208,27 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   setBackground: (color) =>
     pushHistoryAnd(set, get, (doc) => ({ ...doc, background: color })),
 
+  setFormat: (format, foldPanels) =>
+    pushHistoryAnd(set, get, (doc) => {
+      const panels = foldPanels ?? doc.foldPanels ?? 1;
+      if (doc.format === format && doc.foldPanels === panels) return doc;
+      return { ...doc, format, foldPanels: panels };
+    }),
+
+  setPageSize: (width, height, scaleContent = true) =>
+    pushHistoryAnd(set, get, (doc) => {
+      if (doc.width === width && doc.height === height) return doc;
+      if (!scaleContent) return { ...doc, width, height };
+      const kx = width / doc.width;
+      const ky = height / doc.height;
+      return {
+        ...doc,
+        width,
+        height,
+        shapes: doc.shapes.map((s) => scaleShape(s, kx, ky)),
+      };
+    }),
+
   rename: (name) =>
     pushHistoryAnd(set, get, (doc) => ({ ...doc, name })),
 
@@ -220,6 +292,72 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       lastSavedAtUtc: savedAtUtc ?? get().lastSavedAtUtc,
     }),
 }));
+
+/**
+ * Scale a shape's geometry about the page origin when the page is resized.
+ *
+ * Axes are scaled independently. A uniform factor looks tidier on paper but
+ * leaves full-bleed artwork short of the edge: A4 -> A3 is 1.41452x across and
+ * 1.41391x down, so a 1240px-wide hero scaled by the smaller factor lands at
+ * 1753.2px on a 1754px page — a hairline of background down the side of every
+ * template that bleeds off the edge, which is most of them. Per-axis factors
+ * keep bleeds exact and anchored elements anchored.
+ *
+ * The cost is 0.04% of anisotropy between A4 and A3, which is invisible. Radius,
+ * font size and stroke width have no meaningful per-axis reading, so they take
+ * the geometric mean — that keeps circles circular and text proportional while
+ * still tracking the overall size change.
+ *
+ * Intrinsic size is scaled per kind rather than by bumping `shape.scale`,
+ * because `scale` is user-facing (the Transformer writes it, the properties
+ * panel shows it) — folding a page resize into it would make every shape report
+ * a scale the user never applied. Rotation and opacity are dimensionless.
+ */
+function scaleShape(shape: Shape, kx: number, ky: number): Shape {
+  const k = Math.sqrt(kx * ky);
+  const base = {
+    ...shape,
+    position: { x: shape.position.x * kx, y: shape.position.y * ky },
+  };
+
+  switch (base.kind) {
+    case "rect":
+      return {
+        ...base,
+        width: base.width * kx,
+        height: base.height * ky,
+        strokeWidth: base.strokeWidth == null ? base.strokeWidth : base.strokeWidth * k,
+        cornerRadius:
+          base.cornerRadius == null ? base.cornerRadius : base.cornerRadius * k,
+      };
+    case "circle":
+      return {
+        ...base,
+        radius: base.radius * k,
+        strokeWidth: base.strokeWidth == null ? base.strokeWidth : base.strokeWidth * k,
+      };
+    case "line":
+      return {
+        ...base,
+        // points are a flat [x1,y1,x2,y2,...] run.
+        points: base.points.map((p, i) => (i % 2 === 0 ? p * kx : p * ky)),
+        strokeWidth: base.strokeWidth * k,
+      };
+    case "text":
+      return {
+        ...base,
+        fontSize: base.fontSize * k,
+        // The text box width is a horizontal measure, so it tracks kx — this is
+        // what keeps centred headlines centred against a full-bleed band.
+        width: base.width == null ? base.width : base.width * kx,
+      };
+    case "image":
+      return { ...base, width: base.width * kx, height: base.height * ky };
+    case "group":
+      // Children are scaled in their own right as part of the same map.
+      return base;
+  }
+}
 
 function snapshot(doc: CanvasDocument): CanvasDocument {
   return JSON.parse(JSON.stringify(doc)) as CanvasDocument;

@@ -1,4 +1,5 @@
 using Acme.Application.Auth;
+using Acme.Application.BrandKit;
 using Acme.Application.Common;
 using Acme.Application.Sonar;
 using Acme.Domain.Common;
@@ -9,6 +10,7 @@ namespace Acme.Application.Profile;
 
 public sealed class ProfileService(
     IUserRepository users,
+    IBrandKitRepository brandKits,
     ISonarApiClient sonar)
 {
     public async Task<Result<MeDto>> GetMeAsync(string userId, CancellationToken ct)
@@ -16,7 +18,7 @@ public sealed class ProfileService(
         var user = await users.FindByIdAsync(userId, ct);
         return user is null
             ? Result<MeDto>.NotFound("User not found.")
-            : Result<MeDto>.Success(ToDto(user));
+            : Result<MeDto>.Success(await ToDtoAsync(user, ct));
     }
 
     public async Task<Result<MeDto>> UpdateProfileAsync(
@@ -52,7 +54,7 @@ public sealed class ProfileService(
         }
 
         await users.UpdateAsync(user, ct);
-        return Result<MeDto>.Success(ToDto(user));
+        return Result<MeDto>.Success(await ToDtoAsync(user, ct));
     }
 
     public async Task<Result<MeDto>> OnboardAsync(
@@ -94,22 +96,45 @@ public sealed class ProfileService(
         }
 
         await users.UpdateAsync(user, ct);
-        return Result<MeDto>.Success(ToDto(user));
+        return Result<MeDto>.Success(await ToDtoAsync(user, ct));
     }
 
-    private static MeDto ToDto(User u) => new(
-        u.Id,
-        u.Email.Value,
-        u.DisplayName,
-        u.Tier,
-        new PharmacyProfileDto(
-            u.Profile.PharmacyName,
-            u.Profile.Address,
-            u.Profile.PostCode,
-            u.Profile.Description,
-            u.Profile.ContactName,
-            u.Profile.ContactPhone,
-            u.Profile.SonarFCode,
-            u.Profile.OnboardingCompleted),
-        u.CreatedAtUtc);
+    /// <summary>
+    /// The profile as the pharmacist sees it, including the booking link.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The extra read is deliberate.</b> The booking link is stored on the
+    /// brand kit and shown on the profile, so composing this DTO costs one more
+    /// indexed lookup by owner. That is the price of there being exactly one
+    /// copy of the URL, and it is the right trade: the alternative is a second
+    /// stored value that agrees with the first until somebody edits one of them.
+    /// </para>
+    /// <para>
+    /// A pharmacy with no brand kit gets null, which is correct — no kit means
+    /// no link, and the profile page says where to set one.
+    /// </para>
+    /// </remarks>
+    private async Task<MeDto> ToDtoAsync(User u, CancellationToken ct)
+    {
+        var kit = await brandKits.FindByOwnerAsync(u.Id, ct);
+
+        return new MeDto(
+            u.Id,
+            u.Email.Value,
+            u.DisplayName,
+            u.Tier,
+            new PharmacyProfileDto(
+                u.Profile.PharmacyName,
+                u.Profile.Address,
+                u.Profile.PostCode,
+                u.Profile.Description,
+                u.Profile.ContactName,
+                u.Profile.ContactPhone,
+                u.Profile.SonarFCode,
+                u.Profile.OnboardingCompleted,
+                kit?.Pharmacy.BookingUrl),
+            u.CreatedAtUtc,
+            u.Role);
+    }
 }

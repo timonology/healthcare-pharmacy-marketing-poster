@@ -10,28 +10,19 @@ import { TemplatesShowcase } from "@/components/landing/TemplatesShowcase";
 // Testimonials hidden for now — re-enable in app/page.tsx when copy is finalised.
 // import { Testimonials } from "@/components/landing/Testimonials";
 import { TrustBar } from "@/components/landing/TrustBar";
+import { HomeStructuredData } from "@/components/landing/HomeStructuredData";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TAGLINE, pageMetadata } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Sonar Marketing25 — Create marketing posters in minutes",
-  description:
-    "AI-powered drag & drop poster designer made for pharmacies. Print-ready templates, your brand kit auto-applied. Free forever plan.",
-  openGraph: {
-    title: "Sonar Marketing25 — Create marketing posters in minutes",
-    description:
-      "AI-powered drag & drop poster designer made for pharmacies. Print-ready templates, your brand kit auto-applied. Free forever plan.",
-    type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Sonar Marketing25",
-    description:
-      "AI-powered drag & drop poster designer made for pharmacies.",
-  },
+  // Absolute: the brand comes first here, not after the page name.
+  title: { absolute: `${SITE_NAME} — ${SITE_TAGLINE} for UK community pharmacies` },
+  ...pageMetadata({ title: `${SITE_NAME} — ${SITE_TAGLINE}`, description: SITE_DESCRIPTION, path: "/" }),
 };
 
 export default function HomePage() {
   return (
     <>
+      <HomeStructuredData />
       <LandingNav />
       <main>
         <Hero />

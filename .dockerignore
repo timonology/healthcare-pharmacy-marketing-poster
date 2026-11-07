@@ -29,3 +29,19 @@
 .env
 .env.local
 .env.*.local
+
+# Local notes and any other env files: a build stage that runs `COPY . .`
+# would otherwise carry them into its layers (security review R3-03).
+.test
+**/.env.*
+!**/.env.example
+!**/.env.local.example
+**/*.pem
+**/*.pfx
+**/*.key
+
+# Only the web image builds from this context (the API and ai-service build
+# from their own folders). Their sources — including the API's development
+# settings — have no business in its layers.
+apps/api
+apps/ai-service

@@ -11,7 +11,11 @@
     "dev:web": "pnpm --filter web dev",
     "build:web": "pnpm --filter web build",
     "lint": "pnpm -r lint",
-    "test": "pnpm -r test",
+    "test": "bash scripts/test.sh",
+    "test:api": "bash scripts/test.sh api",
+    "test:ai": "bash scripts/test.sh ai",
+    "test:web": "bash scripts/test.sh web",
+    "test:prove": "python3 scripts/prove-regressions.py",
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
     "docker:web": "docker build -f apps/web/Dockerfile -t infosonarinformatics/sonar-marketing-auth:dev .",
@@ -20,9 +24,38 @@
     "ship:restart": "bash scripts/deploy.sh --restart",
     "ship:pin": "bash scripts/deploy.sh --pin",
     "ship:bump": "bash scripts/deploy.sh --bump",
+    "ship:dev": "bash scripts/ship.sh dev",
+    "ship:test": "bash scripts/ship.sh test",
+    "ship:prod": "bash scripts/ship.sh prod",
     "release": "bash scripts/deploy.sh",
     "release:restart": "bash scripts/deploy.sh --restart",
     "release:pin": "bash scripts/deploy.sh --pin",
-    "release:bump": "bash scripts/deploy.sh --bump"
+    "release:bump": "bash scripts/deploy.sh --bump",
+    "test:browser": "playwright install chromium && playwright test",
+    "test:browser:ui": "playwright install chromium && playwright test --ui",
+    "test:api:integration": "bash scripts/test.sh api:integration",
+    "smoke": "node scripts/smoke/run.mjs",
+    "smoke:keep": "SMOKE_KEEP=1 node scripts/smoke/run.mjs",
+    "smoke:selftest": "node scripts/smoke/selftest.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  },
+  "//radix-overrides": [
+    "Radix pins its internal dependencies to exact versions, so two Radix",
+    "packages from different release trains install two copies of the same",
+    "module. These three keep mutable state in module scope and use it to",
+    "mutate document.body, so a second copy means two bookkeepers writing the",
+    "same property: the page renders perfectly and cannot be clicked until it",
+    "is reloaded. Chosen version is the newest of the ones already present, and",
+    "each upgrade was checked to be additive - no prop or export removed.",
+    "scripts/check-radix-layers.mjs fails the build if a second copy returns."
+  ],
+  "pnpm": {
+    "overrides": {
+      "@radix-ui/react-dismissable-layer": "1.2.0",
+      "@radix-ui/react-focus-scope": "1.3.0",
+      "@radix-ui/react-focus-guards": "1.2.0"
+    }
   }
 }

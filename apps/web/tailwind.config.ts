@@ -1,4 +1,7 @@
 import type { Config } from "tailwindcss";
+// An import, not require(): recent Node loads this .ts file natively as an ES
+// module (export default below), where require is not defined.
+import tailwindcssAnimate from "tailwindcss-animate";
 
 const config: Config = {
   darkMode: ["class"],
@@ -19,6 +22,14 @@ const config: Config = {
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+        },
+        // Floating surfaces: menus, popovers, anything drawn over the page.
+        // Kept distinct from `card` because it must be fully opaque — a menu
+        // lets the page show through if this resolves to nothing, which is
+        // exactly what `bg-popover` did while this colour was undeclared.
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
         },
         primary: {
           DEFAULT: "hsl(var(--primary))",
@@ -48,7 +59,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [tailwindcssAnimate],
 };
 
 export default config;

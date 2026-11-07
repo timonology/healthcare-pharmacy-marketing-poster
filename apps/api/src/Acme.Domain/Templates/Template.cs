@@ -33,6 +33,13 @@ public sealed class Template : Entity
             canvasJson,
             isPublished);
 
+    /// <param name="createdAtUtc">
+    /// Explicit creation date. Seeded templates pass this so the gallery's
+    /// "newest first" ordering reflects when a design was actually authored,
+    /// not when the process last restarted — the seeder reconstructs every
+    /// template on boot, so without it they'd all share a timestamp and sort
+    /// by whatever order they happened to be yielded in.
+    /// </param>
     public static Template CreateWithId(
         string id,
         string name,
@@ -40,7 +47,8 @@ public sealed class Template : Entity
         TemplateCategory category,
         IEnumerable<string> tags,
         string canvasJson,
-        bool isPublished = true)
+        bool isPublished = true,
+        DateTime? createdAtUtc = null)
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new DomainException("Id is required.");
@@ -51,7 +59,7 @@ public sealed class Template : Entity
         if (string.IsNullOrWhiteSpace(canvasJson))
             throw new DomainException("Canvas JSON is required.");
 
-        return new Template
+        var template = new Template
         {
             Id = id,
             Name = name.Trim(),
@@ -61,6 +69,14 @@ public sealed class Template : Entity
             CanvasJson = canvasJson,
             IsPublished = isPublished,
         };
+
+        if (createdAtUtc is { } created)
+        {
+            template.CreatedAtUtc = created;
+            template.UpdatedAtUtc = created;
+        }
+
+        return template;
     }
 
     public void Update(

@@ -5,8 +5,14 @@
     "namePrefix": { "value": "pharmposter" },
     "appServiceSku": { "value": "B1" },
     "cosmosThroughput": { "value": 400 },
-    "jwtSecret": {
-      "value": "REPLACE_ME_WITH_64_CHAR_RANDOM_STRING"
-    }
+    "jwtSecret": { "value": "REPLACE_ME_WITH_64_CHAR_RANDOM_STRING" },
+    "anthropicApiKey":   { "value": "" },
+    "tavilyApiKey":      { "value": "" },
+    "pexelsApiKey":      { "value": "" },
+    "elevenLabsApiKey":  { "value": "" },
+    "replicateApiToken": { "value": "" },
+    "aiImage":           { "value": "infosonarinformatics/sonar-marketing-ai:dev" },
+    "dockerHubUsername": { "value": "" },
+    "dockerHubPassword": { "value": "" }
   }
 }

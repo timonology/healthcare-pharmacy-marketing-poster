@@ -16,6 +16,36 @@ public sealed class Patient : Entity
     public string Notes { get; private set; } = string.Empty;
     public IReadOnlyList<string> GroupIds { get; private set; } = Array.Empty<string>();
 
+    /// <summary>
+    /// When the pharmacy recorded this person's agreement to marketing email,
+    /// and how (security review R2-06). Null when none is recorded.
+    /// </summary>
+    public DateTime? MarketingConsentAtUtc { get; private set; }
+
+    public string? MarketingConsentSource { get; private set; }
+
+    /// <summary>
+    /// Records or clears consent. Recording again keeps the first date: the
+    /// question a regulator asks is when it was given, not when the form was
+    /// last saved.
+    /// </summary>
+    public void RecordMarketingConsent(bool given, string source)
+    {
+        if (given)
+        {
+            if (MarketingConsentAtUtc is not null) return;
+            MarketingConsentAtUtc = DateTime.UtcNow;
+            MarketingConsentSource = string.IsNullOrWhiteSpace(source) ? null : source.Trim()[..Math.Min(source.Trim().Length, 200)];
+        }
+        else
+        {
+            if (MarketingConsentAtUtc is null) return;
+            MarketingConsentAtUtc = null;
+            MarketingConsentSource = null;
+        }
+        Touch();
+    }
+
     private Patient() { }
 
     public static Patient Create(

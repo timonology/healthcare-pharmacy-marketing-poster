@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { Pill } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { LogoMark } from "@/components/brand/LogoMark";
 
+// Absolute, so the links work from any page that shows this header; "Blog"
+// pointed at a section that does not exist and was removed.
 const NAV_LINKS = [
-  { href: "#features", label: "Features" },
-  { href: "#templates", label: "Templates" },
-  { href: "#pricing", label: "Pricing" },
-  { href: "#blog", label: "Blog" },
+  { href: "/#features", label: "Features" },
+  { href: "/templates", label: "Templates" },
+  { href: "/pricing", label: "Pricing" },
 ];
 
 export function LandingNav() {
@@ -17,11 +18,9 @@ export function LandingNav() {
     <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
       <div className="container mx-auto flex h-16 items-center justify-between px-4 md:px-6">
         <Link href="/" className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-sm">
-            <Pill className="h-4 w-4" />
-          </span>
+          <LogoMark className="h-8 w-8" />
           <span className="text-base font-semibold tracking-tight">
-            Sonar Marketing25
+            Marketing25
           </span>
         </Link>
 

@@ -41,6 +41,19 @@ public sealed class AzureBlobStorageService : IBlobStorageService
     public Task DeleteAsync(string blobKey, CancellationToken ct) =>
         _container.GetBlobClient(blobKey).DeleteIfExistsAsync(cancellationToken: ct);
 
+    public async Task<IReadOnlyList<string>> ListKeysAsync(string prefix, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(prefix)) return Array.Empty<string>();
+
+        await EnsureContainerAsync(ct);
+
+        var keys = new List<string>();
+        await foreach (var blob in _container.GetBlobsAsync(prefix: prefix, cancellationToken: ct))
+            keys.Add(blob.Name);
+
+        return keys;
+    }
+
     public Uri GetReadOnlyUri(string blobKey, TimeSpan validFor)
     {
         var blob = _container.GetBlobClient(blobKey);

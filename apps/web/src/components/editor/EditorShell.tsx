@@ -17,7 +17,16 @@ const EditorCanvas = dynamic(
   { ssr: false, loading: () => <CanvasFallback /> },
 );
 
-export function EditorShell() {
+/**
+ * The poster editor.
+ *
+ * Normally mounted by /posters/[id], which loads a saved poster first. It is
+ * also mounted directly on a document that has never been saved — see
+ * `onBack` — and that works because every save path is keyed on `posterId`:
+ * `useAutoSave` returns early without one, so nothing is written behind the
+ * caller's back.
+ */
+export function EditorShell({ onBack }: { onBack?: () => void } = {}) {
   useKeyboard();
   useAutoSave();
 
@@ -48,8 +57,8 @@ export function EditorShell() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-muted">
-      <EditorTopBar onExport={exportPng} />
+    <div className="flex h-app-screen flex-col bg-muted">
+      <EditorTopBar onExport={exportPng} onBack={onBack} />
       <div className="flex flex-1 overflow-hidden">
         <EditorToolbar />
         <main ref={stageWrapperRef} className="flex-1 overflow-hidden">

@@ -24,6 +24,7 @@ export function PatientForm({ open, onOpenChange, patient, groups, onSubmit }: P
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +35,7 @@ export function PatientForm({ open, onOpenChange, patient, groups, onSubmit }: P
     setPhone(patient?.phone ?? "");
     setNotes(patient?.notes ?? "");
     setGroupIds(patient?.groupIds ?? []);
+    setConsent(Boolean(patient?.marketingConsentAtUtc));
     setError(null);
   }, [open, patient]);
 
@@ -56,6 +58,7 @@ export function PatientForm({ open, onOpenChange, patient, groups, onSubmit }: P
         phone: phone.trim() || null,
         notes,
         groupIds,
+        marketingConsent: consent,
       });
       onOpenChange(false);
     } catch (e) {
@@ -92,7 +95,40 @@ export function PatientForm({ open, onOpenChange, patient, groups, onSubmit }: P
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="notes">Notes</Label>
-            <Textarea id="notes" value={notes} onChange={e => setNotes(e.target.value)} rows={3} />
+            <Textarea
+              id="notes"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={3}
+              aria-describedby="notes-hint"
+            />
+            {/* Security review R2-15: notes are free text, and health details
+                are special-category data this feature is not meant to hold. */}
+            <p id="notes-hint" className="text-xs text-muted-foreground">
+              For contact preferences only. Do not record health or medication details here.
+            </p>
+          </div>
+
+          {/* Security review R2-06: a record of agreement to marketing email. */}
+          <div className="flex items-start gap-2 rounded-md border border-border p-3">
+            <input
+              id="consent"
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-primary"
+              checked={consent}
+              onChange={e => setConsent(e.target.checked)}
+            />
+            <div className="grid gap-0.5">
+              <Label htmlFor="consent" className="font-normal">
+                Agreed to receive marketing emails from this pharmacy
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {patient?.marketingConsentAtUtc
+                  ? `Recorded ${new Date(patient.marketingConsentAtUtc).toLocaleDateString()}.`
+                  : "Tick only if they have agreed. The date is recorded when you save."}
+                {patient?.unsubscribed && " They have since unsubscribed, so campaigns will not email them."}
+              </p>
+            </div>
           </div>
 
           {groups.length > 0 && (

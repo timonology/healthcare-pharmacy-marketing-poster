@@ -7,6 +7,7 @@ import {
 import type {
   Patient, PatientGroup, UpsertPatientGroupRequest, UpsertPatientRequest,
 } from "@acme/shared-types";
+import { partitionGroups } from "@acme/shared-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,9 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { NoResultsInRange, SortDateControls } from "@/components/lists/SortDateControls";
+import { useListWindow } from "@/hooks/useListWindow";
+import { hasDateRange, listWindowKey, listWindowParams, type ListWindow } from "@/lib/list-window";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { PatientForm } from "./PatientForm";
@@ -40,9 +44,31 @@ export default function PatientsPage() {
   const [patientOpen, setPatientOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
+  // Sort and date added: in the URL, applied by the API.
+  const { listWindow, setListWindow, ready } = useListWindow();
+  const windowKey = listWindowKey(listWindow);
+
+  /** A new sort or range starts again from the first page. */
+  function changeWindow(next: ListWindow) {
+    setSkip(0);
+    setListWindow(next);
+  }
+
+  /** Every filter back to its default. Sort is a preference and stays. */
+  function clearFilters() {
+    setSkip(0);
+    setSearch("");
+    setGroupFilter("");
+    setListWindow({ ...listWindow, from: null, to: null });
+  }
+
   // Groups
   const [groups, setGroups] = useState<PatientGroup[]>([]);
   const [editingGroup, setEditingGroup] = useState<PatientGroup | null>(null);
+
+  // partitionGroups lives in shared-types so every screen splits them the same
+  // way. A general group is visible to this pharmacy but not editable by it.
+  const { mine, general } = partitionGroups(groups);
   const [groupOpen, setGroupOpen] = useState(false);
 
   const reloadGroups = useCallback(async () => {
@@ -51,11 +77,14 @@ export default function PatientsPage() {
   }, [toast]);
 
   const reloadPatients = useCallback(async () => {
+    // Wait for the URL's sort and dates, so a shared link fetches once.
+    if (!ready) return;
     setLoading(true);
     try {
       const data = await api.listPatients({
         search: search || undefined,
         groupId: groupFilter || undefined,
+        ...listWindowParams(listWindow),
         skip,
         take: PAGE_SIZE,
       });
@@ -66,7 +95,9 @@ export default function PatientsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, groupFilter, skip, toast]);
+    // listWindow is covered by windowKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, groupFilter, skip, toast, ready, windowKey]);
 
   useEffect(() => { void reloadGroups(); }, [reloadGroups]);
   useEffect(() => { void reloadPatients(); }, [reloadPatients]);
@@ -168,22 +199,12 @@ export default function PatientsPage() {
     }
   }
 
-  function exportCsv() {
-    const header = "fullName,email,phone,notes,groups";
-    const rows = patients.map(p => [
-      escape(p.fullName), escape(p.email ?? ""), escape(p.phone ?? ""),
-      escape(p.notes),
-      escape(p.groupIds.map(id => groupNameById.get(id) ?? "").filter(Boolean).join(" | ")),
-    ].join(","));
-    const csv = [header, ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `patients-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Export is a plain link to the API, not a blob built here.
+  //
+  // The previous version wrote whatever was on screen — one page, fifty rows —
+  // so "export" on a five-hundred-contact list silently produced fifty. It also
+  // escaped quotes but not leading =, +, - or @, which Excel executes as a
+  // formula when the file is opened. Csv.Escape on the server handles both.
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageIndex = Math.floor(skip / PAGE_SIZE);
@@ -201,8 +222,12 @@ export default function PatientsPage() {
           <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
             <Upload className="mr-2 h-4 w-4" /> Import
           </Button>
-          <Button variant="outline" size="sm" onClick={exportCsv} disabled={patients.length === 0}>
-            <Download className="mr-2 h-4 w-4" /> Export CSV
+          {/* A link, not a click handler: the API streams the file, so the
+              download is every contact rather than the page on screen. */}
+          <Button variant="outline" size="sm" asChild disabled={total === 0}>
+            <a href="/api/patients/export.csv" download>
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </a>
           </Button>
           {tab === "patients" ? (
             <Button size="sm" onClick={() => { setEditing(null); setPatientOpen(true); }}>
@@ -251,7 +276,7 @@ export default function PatientsPage() {
             </select>
 
             {selectedIds.size > 0 && (
-              <div className="ml-auto flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1 text-sm">
+              <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1 text-sm">
                 <strong>{selectedIds.size}</strong> selected
                 <select
                   className="h-7 rounded-md border bg-background px-2 text-xs"
@@ -266,6 +291,8 @@ export default function PatientsPage() {
                 </Button>
               </div>
             )}
+
+            <SortDateControls value={listWindow} onChange={changeWindow} dateField="Date added" />
           </div>
 
           <Card>
@@ -291,6 +318,12 @@ export default function PatientsPage() {
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
+                  ) : patients.length === 0 && hasDateRange(listWindow) ? (
+                    <tr>
+                      <td colSpan={6} className="p-4">
+                        <NoResultsInRange onClear={clearFilters} className="border-0" />
+                      </td>
+                    </tr>
                   ) : patients.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="p-10 text-center text-muted-foreground">
@@ -325,7 +358,15 @@ export default function PatientsPage() {
                           />
                         </td>
                         <td className="p-3 font-medium">{p.fullName}</td>
-                        <td className="p-3 text-muted-foreground">{p.email ?? "—"}</td>
+                        <td className="p-3 text-muted-foreground">
+                          {p.email ?? "—"}
+                          {/* R2-06: campaigns leave this address out. */}
+                          {p.unsubscribed && (
+                            <Badge variant="outline" className="ml-2 text-xs" title="Campaign emails are not sent to this address">
+                              Unsubscribed
+                            </Badge>
+                          )}
+                        </td>
                         <td className="p-3 text-muted-foreground">{p.phone ?? "—"}</td>
                         <td className="p-3">
                           <div className="flex flex-wrap gap-1">
@@ -367,42 +408,31 @@ export default function PatientsPage() {
         </TabsContent>
 
         <TabsContent value="groups" className="mt-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {groups.length === 0 && (
-              <Card className="col-span-full">
-                <CardContent className="py-10 text-center text-muted-foreground">
-                  No groups yet. Create one to target campaigns.
-                </CardContent>
-              </Card>
-            )}
-            {groups.map(g => (
-              <Card key={g.id} className="transition hover:border-primary/40">
-                <CardHeader>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-base">{g.name}</CardTitle>
-                      <CardDescription className="line-clamp-2">{g.description || "—"}</CardDescription>
-                    </div>
-                    <Badge variant="secondary">{g.patientCount}</Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="flex justify-end gap-1 pt-0">
-                  <Button variant="ghost" size="sm"
-                    onClick={() => { setTab("patients"); setGroupFilter(g.id); }}>
-                    View members
-                  </Button>
-                  <Button variant="ghost" size="icon" aria-label="Edit"
-                    onClick={() => { setEditingGroup(g); setGroupOpen(true); }}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" aria-label="Delete"
-                    onClick={() => void deleteGroup(g)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          <GroupGrid
+            title="My groups"
+            description="Only you can see these."
+            groups={mine}
+            emptyMessage="No groups of your own yet. Create one to target campaigns."
+            onView={(g) => { setTab("patients"); setGroupFilter(g.id); }}
+            onEdit={(g) => { setEditingGroup(g); setGroupOpen(true); }}
+            onDelete={(g) => void deleteGroup(g)}
+          />
+
+          {general.length > 0 && (
+            <div className="mt-8">
+              <GroupGrid
+                title="General groups"
+                description={
+                  "Shared across the platform and set up by an administrator. " +
+                  "Add your own patients to them \u2014 the count is yours alone, and " +
+                  "nobody else can see who you have added."
+                }
+                groups={general}
+                emptyMessage=""
+                onView={(g) => { setTab("patients"); setGroupFilter(g.id); }}
+              />
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -422,20 +452,113 @@ export default function PatientsPage() {
       <ImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        onSubmit={async (rows) => {
-          const r = await api.bulkImportPatients({ patients: rows });
-          toast.success(`Imported ${r.imported}`, r.skipped > 0 ? `${r.skipped} skipped` : undefined);
-          await Promise.all([reloadPatients(), reloadGroups()]);
-          return r;
+        onImported={() => {
+          // The dialog shows its own per-row report, so there is no toast here —
+          // a summary that disappears after four seconds is the opposite of what
+          // somebody staring at 88 rejected rows needs.
+          void Promise.all([reloadPatients(), reloadGroups()]);
         }}
       />
     </main>
   );
 }
 
-function escape(v: string) {
-  if (v.includes(",") || v.includes('"') || v.includes("\n")) {
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-  return v;
+
+
+/**
+ * One titled grid of groups.
+ *
+ * Edit and delete are only rendered when a handler is supplied, which is how
+ * general groups end up read-only without a second copy of the card markup.
+ * The API refuses those actions regardless of what is drawn.
+ */
+function GroupGrid({
+  title,
+  description,
+  groups,
+  emptyMessage,
+  onView,
+  onEdit,
+  onDelete,
+}: {
+  title: string;
+  description: string;
+  groups: PatientGroup[];
+  emptyMessage: string;
+  onView: (g: PatientGroup) => void;
+  onEdit?: (g: PatientGroup) => void;
+  onDelete?: (g: PatientGroup) => void;
+}) {
+  return (
+    <section>
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {groups.length === 0 && emptyMessage && (
+          <Card className="col-span-full">
+            <CardContent className="py-10 text-center text-muted-foreground">
+              {emptyMessage}
+            </CardContent>
+          </Card>
+        )}
+
+        {groups.map((g) => (
+          <Card key={g.id} className="transition hover:border-primary/40">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                    {g.name}
+                    {g.isGlobal && (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                        General
+                      </span>
+                    )}
+                  </CardTitle>
+                  <CardDescription className="line-clamp-2">
+                    {g.description || "\u2014"}
+                  </CardDescription>
+                </div>
+                {/* Your members, not the platform total. */}
+                <Badge variant="secondary" title="Your patients in this group">
+                  {g.patientCount}
+                </Badge>
+              </div>
+            </CardHeader>
+            {/* Wraps, for the same reason as the poster and video cards: a row of
+                  actions that cannot wrap inside a card that clips is a button nobody
+                  can reach. */}
+              <CardContent className="flex flex-wrap justify-end gap-1 pt-0">
+              <Button variant="ghost" size="sm" onClick={() => onView(g)}>
+                View members
+              </Button>
+              {onEdit && g.canEdit && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Edit"
+                  onClick={() => onEdit(g)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              )}
+              {onDelete && g.canEdit && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Delete"
+                  onClick={() => onDelete(g)}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
 }

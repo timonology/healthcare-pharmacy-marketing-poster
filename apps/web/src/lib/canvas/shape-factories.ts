@@ -1,3 +1,4 @@
+import { BRAND_BOOKING_QR_SRC } from "@acme/shared-types";
 import type {
   CircleShape,
   ImageShape,
@@ -7,6 +8,8 @@ import type {
   TextShape,
   Vector2,
 } from "@acme/shared-types";
+
+import { PHARMACY_BOOKING_QR_ID } from "./apply-pharmacy";
 
 const id = () => crypto.randomUUID();
 
@@ -63,6 +66,39 @@ export function makeLine(at: Vector2, zIndex: number): LineShape {
     stroke: "#0f172a",
     strokeWidth: 4,
     closed: false,
+  };
+}
+
+/**
+ * The booking-QR slot, as a shape a pharmacist can place themselves.
+ *
+ * <b>Why this exists at all.</b> `applyPharmacyInfo` fills a slot with this id;
+ * it never creates one, deliberately — dropping a QR onto every design unasked
+ * would be the app editing somebody's artwork. But nothing else created one
+ * either: no built-in template carries the slot and the editor had no way to
+ * add it, so the whole feature was unreachable. A slot nothing creates is a
+ * feature nobody has.
+ *
+ * <b>The id is fixed, not generated.</b> Everything downstream — the applier
+ * here, `BrandCanvasAssets.ResolveForRender` on the API, the render cache key —
+ * finds the QR by this exact id. A random one would produce a shape that looks
+ * like a QR in the editor and resolves to nothing on the printed poster.
+ *
+ * Which also means one per design. The caller checks before adding; a second
+ * would silently overwrite the first when the applier upserts by id.
+ */
+export function makeBookingQr(at: Vector2, zIndex: number, size = 220): ImageShape {
+  return {
+    ...baseShape(zIndex),
+    id: PHARMACY_BOOKING_QR_ID,
+    kind: "image",
+    position: at,
+    // The path, not an image. Each renderer resolves it at render time, which
+    // is what makes "change your booking link and every poster follows" work —
+    // the same arrangement the logo uses.
+    blobKey: BRAND_BOOKING_QR_SRC,
+    width: size,
+    height: size,
   };
 }
 

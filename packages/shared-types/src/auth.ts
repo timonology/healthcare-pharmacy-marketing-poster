@@ -30,6 +30,13 @@ export interface UserProfile {
   tier: SubscriptionTier;
   onboardingCompleted: boolean;
   createdAtUtc: string;
+  /**
+   * Drives cosmetic gating only — showing the Admin nav, choosing a landing
+   * page. Every admin endpoint re-checks the role server-side from the signed
+   * token, so tampering with this client-side changes what is displayed and
+   * nothing else.
+   */
+  role: import("./admin").UserRole;
 }
 
 export interface JwtClaims {

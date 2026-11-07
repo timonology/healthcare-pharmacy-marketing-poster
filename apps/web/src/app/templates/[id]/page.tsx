@@ -96,7 +96,11 @@ export default function TemplatePreviewPage() {
       <div className="grid grid-cols-1 gap-8 md:grid-cols-[minmax(0,1fr)_320px]">
         <section className="overflow-hidden rounded-lg border bg-muted shadow-sm">
           <div className="aspect-[1/1.414] w-full">
-            <CanvasPreview doc={template.canvas} className="h-full w-full" />
+            <CanvasPreview
+              doc={template.canvas}
+              className="h-full w-full"
+              withoutBrandAssets
+            />
           </div>
         </section>
 

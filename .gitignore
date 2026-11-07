@@ -25,8 +25,31 @@ __pycache__/
 .env.local
 .env.*.local
 
+# Stripe setup output. Price and product ids aren't secrets, but these files
+# differ per Stripe account and per mode — committing them means someone
+# eventually points production at another account's prices.
+scripts/stripe/stripe_products.*.env
+scripts/stripe/stripe_prices.*.env
+
+# Holds a real secret key so it can be loaded into user-secrets in one step.
+# Meant to be deleted after running.
+scripts/stripe/setup_local_secrets.sh
+
 # OS
 .DS_Store
 Thumbs.db
 
 .test
+# QA environment secrets (infra/azure/test.env.example is the template)
+infra/azure/test.env
+
+# Playwright output: traces and screenshots hold signed-in pages, cookies and
+# tokens from test runs (security review SEC-16).
+playwright-report/
+test-results/
+blob-report/
+# Local QA slide previews.
+.qa*/
+
+# Local credentials to import with `dotnet user-secrets set` — never committed.
+*.local.json

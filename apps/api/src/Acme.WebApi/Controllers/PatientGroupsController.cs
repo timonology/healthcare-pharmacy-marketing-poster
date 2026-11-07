@@ -4,6 +4,7 @@ using Acme.Application.Common;
 using Acme.Application.Patients;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Acme.WebApi.Auditing;
 
 namespace Acme.WebApi.Controllers;
 
@@ -20,6 +21,7 @@ public sealed class PatientGroupsController(PatientGroupService service) : Contr
         return Ok(await service.ListAsync(userId, ct));
     }
 
+    [ActivityLog("patient.group.view", "patient_group")]
     [HttpGet("{id}")]
     [ProducesResponseType(typeof(PatientGroupDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
@@ -29,6 +31,7 @@ public sealed class PatientGroupsController(PatientGroupService service) : Contr
         return ToResponse(result, () => Ok(result.Value));
     }
 
+    [ActivityLog("patient.group.members_view", "patient_group")]
     [HttpGet("{id}/members")]
     [ProducesResponseType(typeof(IReadOnlyList<PatientDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Members(string id, CancellationToken ct)
@@ -38,6 +41,7 @@ public sealed class PatientGroupsController(PatientGroupService service) : Contr
         return ToResponse(result, () => Ok(result.Value));
     }
 
+    [Audit("patient.group.create", "patient_group")]
     [HttpPost]
     [ProducesResponseType(typeof(PatientGroupDto), StatusCodes.Status201Created)]
     public async Task<IActionResult> Create(
@@ -49,6 +53,7 @@ public sealed class PatientGroupsController(PatientGroupService service) : Contr
         return ToResponse(result, () => StatusCode(StatusCodes.Status201Created, result.Value));
     }
 
+    [Audit("patient.group.update", "patient_group")]
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(PatientGroupDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> Update(
@@ -61,6 +66,7 @@ public sealed class PatientGroupsController(PatientGroupService service) : Contr
         return ToResponse(result, () => Ok(result.Value));
     }
 
+    [Audit("patient.group.delete", "patient_group")]
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)

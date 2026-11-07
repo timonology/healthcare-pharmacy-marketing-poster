@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Pill, Sparkles } from "lucide-react";
-import type { SubscriptionTier } from "@acme/shared-types";
+import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
+import { PLAN_HIGHLIGHTS, PLAN_PRICES_GBP, type SubscriptionTier } from "@acme/shared-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,9 @@ import { api } from "@/lib/api";
 import { readPendingSignup } from "@/lib/pending-signup";
 import { useAuthStore } from "@/store/auth-store";
 import { useSubscriptionStore } from "@/store/subscription-store";
+import { useTokenValuesStore } from "@/store/token-values-store";
+import { tokenValuesFrom } from "@/lib/canvas/display-tokens";
+import { LogoMark } from "@/components/brand/LogoMark";
 
 interface FormState {
   pharmacyName: string;
@@ -27,25 +30,25 @@ interface FormState {
 
 const STEPS = ["Pharmacy", "Contact", "Plan"] as const;
 
-const PLAN_CHOICES: { tier: SubscriptionTier; name: string; price: string; highlights: string[]; featured?: boolean }[] = [
+const PLAN_CHOICES: { tier: SubscriptionTier; name: string; price: string; highlights: readonly string[]; featured?: boolean }[] = [
   {
     tier: "Free",
     name: "Free",
-    price: "£0",
-    highlights: ["5 posters", "Basic templates", "Watermark on exports"],
+    price: `£${PLAN_PRICES_GBP.Free}`,
+    highlights: PLAN_HIGHLIGHTS.Free,
   },
   {
     tier: "Starter",
     name: "Starter",
-    price: "£7",
+    price: `£${PLAN_PRICES_GBP.Starter}`,
     featured: true,
-    highlights: ["30 posters", "All templates", "No watermark", "500 patients/month"],
+    highlights: PLAN_HIGHLIGHTS.Starter,
   },
   {
     tier: "Pro",
     name: "Pro",
-    price: "£25",
-    highlights: ["Unlimited posters", "Priority AI", "5,000 patients/month", "Team collaboration"],
+    price: `£${PLAN_PRICES_GBP.Pro}`,
+    highlights: PLAN_HIGHLIGHTS.Pro,
   },
 ];
 
@@ -125,6 +128,28 @@ export default function OnboardingPage() {
     setStep((s) => Math.max(0, s - 1));
   }
 
+  /**
+   * "I'll do this later."
+   *
+   * Nothing is saved and nothing is marked complete — this only records the
+   * choice, for this browser session, so the app stops standing in the way.
+   * Signing out forgets it, which is what makes the next sign-in ask again.
+   *
+   * A hard navigation because middleware decides where an un-onboarded person
+   * is allowed to go, and it needs to see the new cookie to let them through.
+   */
+  async function skip() {
+    setPending(true);
+    setError(null);
+    try {
+      await api.skipOnboarding();
+      window.location.assign("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not skip setup.");
+      setPending(false);
+    }
+  }
+
   async function submit() {
     setPending(true);
     setError(null);
@@ -139,11 +164,14 @@ export default function OnboardingPage() {
         sonarFCode: form.sonarFCode.trim().toUpperCase() || null,
         tier: form.tier,
       });
+      // Every poster made before onboarding fills in now, on screen as in print.
+      useTokenValuesStore.getState().setValues(tokenValuesFrom(me.profile));
       setUser({
         id: me.id,
         email: me.email,
         displayName: me.displayName,
         tier: me.tier,
+        role: me.role,
         onboardingCompleted: true,
         createdAtUtc: me.createdAtUtc,
       });
@@ -167,9 +195,7 @@ export default function OnboardingPage() {
 
       <main className="container relative mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-12">
         <div className="flex flex-col items-center text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-emerald-500 text-primary-foreground shadow-lg">
-            <Pill className="h-6 w-6" />
-          </span>
+          <LogoMark className="h-12 w-12" title="Marketing25" />
           <h1 className="mt-4 text-2xl font-bold tracking-tight">Set up your pharmacy</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Three short steps so we can personalize posters and campaigns for you.
@@ -215,6 +241,26 @@ export default function OnboardingPage() {
               </Button>
             )}
           </div>
+        </div>
+
+        {/* Below the card, not inside the button row. Skipping is a real
+            option, so it needs to be findable — but it should not sit at the
+            same weight as the step that finishes the job. */}
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={skip}
+            disabled={pending}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline disabled:opacity-60"
+          >
+            Skip for now
+          </button>
+          <p className="mx-auto mt-2 max-w-md text-xs text-muted-foreground">
+            You can start using Marketing25 straight away. Until this is
+            finished your pharmacy name and contact details are missing, so
+            posters and campaign emails go out unbranded — and we&apos;ll ask
+            again next time you sign in.
+          </p>
         </div>
       </main>
     </div>
@@ -281,7 +327,7 @@ function PharmacyStep({
           id="pharmacyName"
           value={form.pharmacyName}
           onChange={(e) => setForm({ ...form, pharmacyName: e.target.value })}
-          placeholder="Acme Community Pharmacy"
+          placeholder="Riverside Community Pharmacy"
           required
         />
       </div>

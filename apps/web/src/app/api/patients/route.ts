@@ -9,7 +9,7 @@ import { apiFetch } from "@/lib/server/api-proxy";
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const qs = new URLSearchParams();
-  for (const key of ["search", "groupId", "skip", "take"] as const) {
+  for (const key of ["search", "groupId", "sort", "from", "to", "skip", "take"] as const) {
     const value = searchParams.get(key);
     if (value) qs.set(key, value);
   }
